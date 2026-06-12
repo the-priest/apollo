@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Apollo — AI song forge · installer
 #   curl -fsSL https://raw.githubusercontent.com/the-priest/apollo/main/install.sh | bash
-# add --neural to also install the local AI-vocal engine (heavy, optional):
-#   curl -fsSL https://raw.githubusercontent.com/the-priest/apollo/main/install.sh | bash -s -- --neural
+# the installer sets up the FREE hosted AI-vocal engine by default (no GPU, no key).
+# add --neural to also install the heavy LOCAL model (only worth it on a GPU machine):
+#   ... | bash -s -- --neural
 set -euo pipefail
 
 RAW_URL="https://raw.githubusercontent.com/the-priest/apollo/main/apollo.py"
@@ -18,7 +19,7 @@ sudo apt-get install -y --no-install-recommends espeak-ng python3-numpy ffmpeg p
 
 if ! command -v chromium >/dev/null && ! command -v chromium-browser >/dev/null \
    && ! command -v brave-browser >/dev/null && ! command -v google-chrome >/dev/null; then
-  say "NOTE: no chromium/brave/chrome found — Apollo will open in your default browser instead of an app window."
+  say "NOTE: no chromium/brave/chrome found — Apollo opens in your default browser instead of an app window."
 fi
 
 mkdir -p "$APP_DIR" "$BIN_DIR"
@@ -40,13 +41,15 @@ chmod +x "$BIN_DIR/apollo"
 say "installing app icon + launcher…"
 python3 "$APP_DIR/apollo.py" --install-desktop
 
+say "setting up the FREE hosted AI-vocal engine (no GPU, no key)…"
+python3 "$APP_DIR/apollo.py" --setup-hosted || say "hosted setup hiccup — you can run it later: apollo --setup-hosted"
+
 if [ "$WANT_NEURAL" = "1" ]; then
-  say "setting up the local neural engine (ACE-Step) — this pulls PyTorch + the model, give it time…"
+  say "also setting up the LOCAL neural model (heavy — PyTorch + weights)…"
   python3 "$APP_DIR/apollo.py" --setup-neural
-else
-  say "TIP: for FREE local AI vocals (no API key), run:  apollo --setup-neural"
 fi
 
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "NOTE: $BIN_DIR not in PATH — launch from your app menu, or run: $BIN_DIR/apollo";; esac
 
-say "done. launch 'Apollo' from your app menu (sting + own window). songs save to ~/Music/Apollo"
+say "done. launch 'Apollo' from your app menu."
+say "pick the HOSTED engine for free real AI vocals (no key). songs save to ~/Music/Apollo"

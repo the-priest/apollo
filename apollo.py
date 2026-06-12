@@ -16,7 +16,7 @@ except ImportError:
 
 SR = 44100
 APP = "apollo"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 CONF_DIR = os.path.expanduser("~/.config/apollo")
 CONF_PATH = os.path.join(CONF_DIR, "config.json")
 LIB_DIR = os.path.expanduser("~/Music/Apollo")
@@ -35,6 +35,8 @@ DEFAULT_CONF = {
     "neural_checkpoint": "",      # optional local checkpoint dir; blank = auto-download to ~/.cache/ace-step
     "neural_steps": 27,           # diffusion steps (higher = better + slower)
     "neural_guidance": 12.0,
+    "hosted_space": "ACE-Step/ACE-Step",   # free HF Space for no-GPU neural vocals
+    "hf_token": "",               # optional: your own HF token = your own queue/quota (free)
     "port": 8585,
 }
 
@@ -216,6 +218,18 @@ def place(track, sample, t_sec, vel=1.0):
     if i < 0 or i >= len(track): return
     seg = sample[: len(track) - i]
     track[i:i+len(seg)] += seg * vel
+
+def addto(dst, src, gain=1.0):
+    """Add src into dst from index 0, tolerating any length mismatch (no broadcast errors)."""
+    m = min(len(dst), len(src))
+    if m: dst[:m] += src[:m] * gain
+    return dst
+
+def fit(x, n):
+    """Force x to exactly length n (pad with zeros or truncate)."""
+    if len(x) == n: return x
+    if len(x) > n: return x[:n]
+    out = np.zeros(n, dtype=np.float32); out[:len(x)] = x; return out
 
 # ----------------------------------------------------------------------------- genres
 GENRES = {
@@ -422,51 +436,54 @@ def render_bass_note(midi, dur, style):
         y = osc_sine(f, dur) + 0.3*osc_sine(f*2, dur)
         y = soft_drive(y, 1.8)
     elif style in ("eights", "roots8"):
-        y = fft_filter(supersaw(f, dur, 5, 2) * 0.8 + osc_sine(f, dur)*0.5, lp=900)
+        y = fft_filter(addto(supersaw(f, dur, 5, 2)*0.8, osc_sine(f, dur), 0.5), lp=900)
     else:
         y = osc_sine(f, dur)*0.8 + osc_tri(f, dur)*0.4
-    return (y * env_adsr(n, a=0.004, d=0.03, s=0.85, r=min(0.06, dur*0.3)))[:n]
+    return fit(y, n) * env_adsr(n, a=0.004, d=0.03, s=0.85, r=min(0.06, dur*0.3))
 
 def render_harm(chord, dur, kind, energy):
     n = int(dur*SR); y = np.zeros(n, dtype=np.float32)
+    chord = list(chord) or [57]
     if kind == "pad":
         for p in chord:
-            y[:] += fft_filter(supersaw(midi_hz(p+12), dur, 8, 3), lp=1800 + 1800*energy/10)[:n] / len(chord)
+            addto(y, fft_filter(supersaw(midi_hz(p+12), dur, 8, 3), lp=1800 + 1800*energy/10), 1.0/len(chord))
         y *= env_adsr(n, a=min(0.5, dur*0.4), d=0.1, s=0.9, r=min(0.5, dur*0.3))
     elif kind == "pluck":
         hits = np.arange(0, dur-0.01, 0.5)
-        tone = np.zeros(n, dtype=np.float32)
+        tone = np.zeros(int(min(0.4, dur)*SR), dtype=np.float32)
         for p in chord:
-            tone += fft_filter(supersaw(midi_hz(p+12), min(0.4, dur), 7, 2), lp=3000) / len(chord)
+            addto(tone, fft_filter(supersaw(midi_hz(p+12), min(0.4, dur), 7, 2), lp=3000), 1.0/len(chord))
+        decay = np.exp(-np.arange(len(tone))/SR/0.16).astype(np.float32)
+        tone = tone * decay
         for i, h in enumerate(hits):
-            seg = tone * np.exp(-np.arange(len(tone))/SR/0.16).astype(np.float32)
-            place(y, seg, h, 0.9 if i % 2 == 0 else 0.6)
+            place(y, tone, h, 0.9 if i % 2 == 0 else 0.6)
     elif kind == "power":
         root = chord[0]
         stack = [root, root+7, root+12]
         hits = np.arange(0, dur-0.01, 0.5)
         tone = np.zeros(int(0.45*SR), dtype=np.float32)
         for p in stack:
-            tone += supersaw(midi_hz(p), 0.45, 11, 3) / 3
+            addto(tone, supersaw(midi_hz(p), 0.45, 11, 3), 1.0/3)
         tone = fft_filter(soft_drive(tone, 3.2), lp=4200, hp=90)
-        tone *= np.exp(-np.arange(len(tone))/SR/0.13).astype(np.float32)
+        tone = tone * np.exp(-np.arange(len(tone))/SR/0.13).astype(np.float32)
         for h in hits: place(y, tone, h, 0.85)
     else:  # epiano
+        t = _t(dur)
         for p in chord:
-            f = midi_hz(p+12); t = _t(dur)
+            f = midi_hz(p+12)
             v = (np.sin(2*np.pi*f*t) + 0.45*np.sin(2*np.pi*2*f*t)*np.exp(-t*6)
                  + 0.18*np.sin(2*np.pi*3.01*f*t)*np.exp(-t*9))
             v *= np.exp(-t/1.4) * (1 + 0.07*np.sin(2*np.pi*4.4*t))
-            y[:] += v.astype(np.float32)[:n] / len(chord)
+            addto(y, v.astype(np.float32), 1.0/len(chord))
         y *= env_adsr(n, a=0.005, d=0.1, s=0.9, r=min(0.3, dur*0.3))
-    return y[:n]
+    return fit(y, n)
 
 def render_lead_note(midi, dur, wavekind):
     f = midi_hz(midi + 12); n = int(dur*SR)
     if wavekind == "saw": y = fft_filter(supersaw(f, dur, 7, 3), lp=5200)
     elif wavekind == "tri": y = osc_tri(f, dur)
-    else: y = osc_sine(f, dur) + 0.2*osc_sine(2*f, dur)
-    return (y * env_adsr(n, a=0.01, d=0.05, s=0.8, r=min(0.08, dur*0.3)))[:n]
+    else: y = addto(osc_sine(f, dur), osc_sine(2*f, dur), 0.2)
+    return fit(y, n) * env_adsr(n, a=0.01, d=0.05, s=0.8, r=min(0.08, dur*0.3))
 
 def render_arp(chord, dur, bps_beat_sec):
     n = int(dur*SR); y = np.zeros(n, dtype=np.float32)
@@ -569,11 +586,13 @@ def render_local(spec, opts, progress=lambda s: None):
         for k in ("harm","arp","bass"): tr[k] *= duck.astype(np.float32)
 
     gains = dict(drums=0.95, bass=0.78, harm=0.42, arp=0.32, lead=1.0, vox=1.05)
-    dry = sum(tr[k]*gv for k, gv in gains.items())
+    dry = np.zeros(N, dtype=np.float32)
+    for k, gv in gains.items(): addto(dry, tr[k], gv)
     irl, irr = make_reverb_ir(1.7 if g["verb"] > 0.3 else 1.1)
-    send = tr["vox"]*g["verb"] + tr["lead"]*0.25 + tr["snare_send"]*g["verb"]*0.6
-    wetL = fft_convolve(send, irl)[:N]; wetR = fft_convolve(send, irr)[:N]
-    width = tr["harm"]*0.18 + tr["arp"]*0.22
+    send = np.zeros(N, dtype=np.float32)
+    addto(send, tr["vox"], g["verb"]); addto(send, tr["lead"], 0.25); addto(send, tr["snare_send"], g["verb"]*0.6)
+    wetL = fit(fft_convolve(send, irl), N); wetR = fit(fft_convolve(send, irr), N)
+    width = np.zeros(N, dtype=np.float32); addto(width, tr["harm"], 0.18); addto(width, tr["arp"], 0.22)
     L = dry - width*0.5 + wetL
     R = dry + width*0.5 + wetR
     peak = max(np.max(np.abs(L)), np.max(np.abs(R)), 1e-9)
@@ -851,6 +870,123 @@ def generate_cloud(opts, progress):
     audio = bytes.fromhex(hexstr)
     return title, lyrics, audio, style
 
+# ----------------------------------------------------------------------------- hosted engine (free HF Space, no GPU, no key, real vocals)
+_HOSTED_OK = {}
+def hosted_available():
+    """gradio_client present? (the only dep for the hosted free path)"""
+    if "v" in _HOSTED_OK: return _HOSTED_OK["v"]
+    try:
+        import gradio_client  # noqa
+        ok = True
+    except Exception:
+        ok = False
+    _HOSTED_OK["v"] = ok
+    return ok
+
+def _hosted_pick_endpoint(client):
+    """Find the text->music endpoint on whatever ACE-Step Space build is live."""
+    try:
+        info = client.view_api(return_format="dict") or {}
+    except Exception:
+        info = {}
+    named = (info.get("named_endpoints") or {})
+    # prefer endpoints whose name screams generation
+    pref = [n for n in named if any(k in n.lower() for k in ("generate", "text2music", "text_to_music", "music", "run", "predict"))]
+    order = pref + [n for n in named if n not in pref]
+    return order
+
+def generate_hosted(opts, progress):
+    if not hosted_available():
+        raise RuntimeError("hosted engine needs the gradio-client package — run:  python3 apollo.py --setup-hosted  "
+                           "(tiny, ~1 min, no GPU). Then this works with no key.")
+    from gradio_client import Client
+    if opts.get("genre", "auto") == "auto":
+        opts["genre"] = random.choice(list(GENRES))
+    title, style, lyrics = neural_brief(opts, progress)
+    voice = opts.get("voice", "auto")
+    if voice == "instrumental":
+        lyrics = "[inst]"
+    elif voice in ("male", "female") and "vocal" not in style.lower():
+        style = f"{style}, {voice} vocals"
+    lyrics = normalize_lyric_tags(lyrics) or "[inst]"
+    dur = float(NEURAL_SECONDS.get(opts.get("length", "standard"), 120))
+    space = (CONF.get("hosted_space") or "ACE-Step/ACE-Step").strip()
+    token = (CONF.get("hf_token") or "").strip() or None
+    progress(f"connecting to free neural Space ({space})")
+    client = None; cerr = None
+    for kwargs in ([{"hf_token": token}] if token else []) + ([{"token": token}] if token else []) + [{}]:
+        try:
+            client = Client(space, verbose=False, **kwargs); break
+        except TypeError:
+            try: client = Client(space, **kwargs); break
+            except Exception as e: cerr = e
+        except Exception as e:
+            cerr = e
+    if client is None:
+        raise RuntimeError(f"couldn't reach the free Space ({cerr}). It may be sleeping/busy — retry in a minute, "
+                           f"or use the cloud engine (free MiniMax key) for reliability.")
+    eps = _hosted_pick_endpoint(client)
+    if not eps:
+        raise RuntimeError("the free Space changed its API and no generation endpoint was found. "
+                           "Use the cloud engine for now; I can point Apollo at a new Space later.")
+    # ACE-Step Space signature: (format, audio_duration, prompt, lyrics, infer_step, guidance_scale, ...)
+    attempts = [
+        dict(format="wav", audio_duration=dur, prompt=style, lyrics=lyrics,
+             infer_step=int(CONF.get("neural_steps", 27)), guidance_scale=float(CONF.get("neural_guidance", 12.0))),
+        dict(prompt=style, lyrics=lyrics, audio_duration=dur),
+        dict(prompt=style, lyrics=lyrics),
+    ]
+    last_err = None; result = None
+    progress("queued on the free Space — first run can take a few minutes, hang tight")
+    for ep in eps[:3]:
+        for kw in attempts:
+            try:
+                job = client.submit(api_name=ep, **kw)
+                # stream status while it runs
+                while not job.done():
+                    try:
+                        st = job.status()
+                        if getattr(st, "rank", None) is not None:
+                            progress(f"queue position {st.rank}" + (f", ~{int(st.eta)}s" if getattr(st, "eta", None) else ""))
+                    except Exception: pass
+                    time.sleep(2.0)
+                result = job.result()
+                break
+            except TypeError as e:
+                last_err = e; continue   # wrong kwargs for this endpoint, try simpler
+            except Exception as e:
+                last_err = e; continue
+        if result is not None: break
+    if result is None:
+        raise RuntimeError(f"the free Space didn't return audio ({last_err}). It's likely overloaded — "
+                           f"retry shortly, or use the cloud engine (fast, free key).")
+    # result may be a filepath, a dict with 'value'/'name', or a tuple containing one
+    path = _hosted_extract_audio(result)
+    if not path or not os.path.isfile(path):
+        raise RuntimeError("the free Space returned an unexpected result. Try again, or use the cloud engine.")
+    mp3 = maybe_mp3(path) if path.endswith(".wav") else path
+    dst = os.path.join(TMP_DIR, f"{opts.get('_jid','hosted')}{os.path.splitext(mp3)[1]}")
+    shutil.copyfile(mp3, dst)
+    with open(dst, "rb") as f: audio = f.read()
+    return title, lyrics, audio, style, os.path.basename(dst)
+
+def _hosted_extract_audio(res):
+    """Dig an audio filepath out of whatever shape the Space returned."""
+    def from_one(x):
+        if isinstance(x, str) and os.path.isfile(x): return x
+        if isinstance(x, dict):
+            for k in ("name", "value", "path", "audio"):
+                v = x.get(k)
+                if isinstance(v, str) and os.path.isfile(v): return v
+        return None
+    p = from_one(res)
+    if p: return p
+    if isinstance(res, (list, tuple)):
+        for item in res:
+            p = from_one(item) or (_hosted_extract_audio(item) if isinstance(item, (list, tuple, dict)) else None)
+            if p: return p
+    return None
+
 # ----------------------------------------------------------------------------- neural engine (ACE-Step 1.5, fully local, real vocals)
 _NEURAL_TAG_RX = re.compile(r"\[(intro|verse|pre[\s-]?chorus|chorus|bridge|solo|hook|outro|inst|instrumental|break)\b[^\]]*\]", re.I)
 
@@ -1039,7 +1175,12 @@ def run_job(jid, opts):
         opts["_jid"] = jid
         if opts.get("genre", "auto") == "auto":
             opts["genre"] = random.choice(list(GENRES))
-        if engine == "neural":
+        if engine == "hosted":
+            title, lyrics, audio, style, fname = generate_hosted(opts, progress)
+            with open(os.path.join(TMP_DIR, fname), "wb") as f: f.write(audio)
+            job.update(title=title, lyrics=lyrics, file=f"/audio/{fname}", style=style,
+                       meta=f"hosted neural · ACE-Step Space · {opts['genre']} · free, no key")
+        elif engine == "neural":
             title, lyrics, audio, style, fname = generate_neural(opts, progress)
             with open(os.path.join(TMP_DIR, fname), "wb") as f: f.write(audio)
             job.update(title=title, lyrics=lyrics, file=f"/audio/{fname}", style=style,
@@ -1293,7 +1434,7 @@ class Handler(BaseHTTPRequestHandler):
                     "groq": masked(CONF["groq_api_key"]), "sf_model": CONF["siliconflow_model"],
                     "mm_model": CONF["minimax_model"], "espeak": bool(ESPEAK), "lib": LIB_DIR,
                     "neural": neural_available(), "neural_python": neural_python_path(),
-                    "neural_steps": CONF.get("neural_steps", 27)})
+                    "neural_steps": CONF.get("neural_steps", 27), "hosted": hosted_available()})
             if path == "/api/status":
                 job = JOBS.get(q.get("id", ""))
                 if not job: return self._send(404, {"error": "unknown job"})
@@ -1333,11 +1474,11 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/save":
                 return self._send(200, {"path": save_job(str(body.get("id", "")))})
             if self.path == "/api/config":
-                for k in ("siliconflow_api_key","minimax_api_key","groq_api_key","siliconflow_model","minimax_model","neural_python","neural_checkpoint"):
+                for k in ("siliconflow_api_key","minimax_api_key","groq_api_key","siliconflow_model","minimax_model","neural_python","neural_checkpoint","hf_token","hosted_space"):
                     v = body.get(k)
                     if isinstance(v, str) and v.strip() and "…" not in v: CONF[k] = v.strip()
                 if isinstance(body.get("neural_steps"), (int, float)): CONF["neural_steps"] = int(body["neural_steps"])
-                _NEURAL_OK.clear()
+                _NEURAL_OK.clear(); _HOSTED_OK.clear()
                 save_conf(CONF)
                 return self._send(200, {"ok": True})
             return self._send(404, {"error": "not found"})
@@ -1484,7 +1625,7 @@ the big hook"></textarea>
 </div>
 <script>
 const GROUPS={
- engine:[["neural","NEURAL · LOCAL AI VOCALS"],["cloud","CLOUD · REAL VOCALS"],["local","SYNTH · OFFLINE ROBOVOX"]],
+ engine:[["hosted","HOSTED · FREE AI VOCALS"],["cloud","CLOUD · REAL VOCALS"],["neural","NEURAL · LOCAL (GPU)"],["local","SYNTH · OFFLINE"]],
  mode:[["auto","AUTO"],["manual","MANUAL · EDIT"]],
  genre:[["auto","AUTO"],["synthwave","SYNTHWAVE"],["pop","POP"],["rock","ROCK"],["hiphop","HIP-HOP"],["edm","EDM"],["lofi","LO-FI"],["metal","METAL"],["folk","FOLK"]],
  mood:[["auto","AUTO"],["dark","DARK"],["upbeat","UPBEAT"],["melancholy","MELANCHOLY"],["aggressive","AGGRESSIVE"],["chill","CHILL"],["epic","EPIC"],["romantic","ROMANTIC"]],
@@ -1509,27 +1650,28 @@ function syncVoice(){
     c.classList.toggle("off",hide);
     if(hide&&sel.voice===c.dataset.v){sel.voice="auto";[...$("g_voice").children].forEach(x=>x.classList.toggle("on",x.dataset.v==="auto"));}
   });
-  const man=sel.mode==="manual", synth=sel.engine==="local", styled=sel.engine==="cloud"||sel.engine==="neural";
+  const man=sel.mode==="manual", synth=sel.engine==="local", styled=sel.engine!=="local";
   $("manual").classList.toggle("show",man);
   $("mStyle").style.display=styled?"":"none"; $("lblStyle").style.display=styled?"":"none";
   $("rowBK").style.display=synth?"flex":"none"; $("lblBK").style.display=synth?"":"none";
   $("go").textContent=man?"RENDER MY EDIT":"GENERATE";
   const note=$("engineNote");
-  if(sel.engine==="neural")note.textContent=window.__neural?"✓ neural ready — free local AI vocals, no key. Slower without a GPU.":"⚠ neural not installed — run  python3 apollo.py --setup-neural  (one-time). Free, real vocals, no key.";
-  else if(sel.engine==="cloud")note.textContent="needs a free MiniMax key (gear). Real sung vocals, fast.";
-  else note.textContent="offline, instant, no key — synth music + robotic vocals.";
+  if(sel.engine==="hosted")note.textContent=window.__hosted?"✓ free AI vocals on a hosted GPU — no key, no local GPU needed. First run can take a few min (shared queue).":"⚠ one-time tiny setup:  python3 apollo.py --setup-hosted  — then free real AI vocals, no key, no GPU.";
+  else if(sel.engine==="cloud")note.textContent="needs a free MiniMax key (gear). Real sung vocals, fast + reliable.";
+  else if(sel.engine==="neural")note.textContent=window.__neural?"✓ local AI vocals — private + offline. SLOW without a GPU (minutes/song on a laptop).":"⚠ local model:  python3 apollo.py --setup-neural  — best on a GPU machine, slow on laptops.";
+  else note.textContent="offline, instant, no key — synth music + robotic vocals. Always works.";
 }
 // ---- config
 async function loadConf(){
   const c=await (await fetch("/api/config")).json();
-  window.__neural=!!c.neural;
+  window.__neural=!!c.neural; window.__hosted=!!c.hosted;
   $("k_sf").placeholder=c.siliconflow||"sk-…"; $("k_mm").placeholder=c.minimax||"…"; $("k_gq").placeholder=c.groq||"gsk_…";
   $("m_sf").value=c.sf_model; $("m_mm").value=c.mm_model; $("libPath").textContent="· "+c.lib;
-  $("confHint").innerHTML=(c.neural?"Neural engine: <b>ready</b> (ACE-Step, free local AI vocals). ":"Neural engine: not installed — run <b>python3 apollo.py --setup-neural</b> for free local AI vocals (no key). ")
-    +(c.espeak?"":"espeak-ng missing — synth songs will be instrumental. ")
-    +(c.minimax?"":"No MiniMax key: cloud engine off. ")+(c.siliconflow?"":"No SiliconFlow key: synth/neural use a built-in lyric template.");
+  $("confHint").innerHTML=(c.hosted?"Hosted engine: <b>ready</b> (free AI vocals, no GPU/key needed). ":"Hosted engine: run <b>python3 apollo.py --setup-hosted</b> for free AI vocals — no GPU, no key. ")
+    +(c.minimax?"":"No MiniMax key: cloud engine off. ")+(c.siliconflow?"":"No SiliconFlow key: lyrics use a built-in template. ")
+    +(c.espeak?"":"espeak-ng missing — synth songs are instrumental.");
   if(!localStorage.getItem("apollo_engine")){
-    const def=c.neural?"neural":(c.minimax?"cloud":"local");
+    const def=c.hosted?"hosted":(c.minimax?"cloud":(c.neural?"neural":"local"));
     sel.engine=def;[...$("g_engine").children].forEach(x=>x.classList.toggle("on",x.dataset.v===def));
   }
   syncVoice();
@@ -1637,6 +1779,21 @@ $("player").addEventListener("play",()=>{hookVU();acx&&acx.resume();});
 loadConf();loadLib();
 </script></body></html>"""
 
+def setup_hosted():
+    """Tiny one-time install: gradio-client, for the free no-GPU hosted neural engine."""
+    print("[apollo] installing gradio-client for the free hosted neural engine (no GPU, no key)…")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "gradio_client"])
+    except subprocess.CalledProcessError:
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", "gradio_client"])
+        except subprocess.CalledProcessError as e:
+            print(f"[apollo] install failed: {e}\n[apollo] try:  pip install gradio_client")
+            return
+    _HOSTED_OK.clear()
+    print(f"[apollo] hosted engine {'READY' if hosted_available() else 'installed — restart Apollo'}.")
+    print("[apollo] launch Apollo, pick the HOSTED engine. Real AI vocals, free, runs on the Space's GPU.")
+
 def setup_neural():
     """One-time: build an isolated venv with PyTorch + ACE-Step, wire it into config."""
     import venv as _venv
@@ -1680,8 +1837,13 @@ def main():
     ap.add_argument("--no-window", action="store_true", help="don't open the app window")
     ap.add_argument("--no-sound", action="store_true", help="skip the launch sting")
     ap.add_argument("--install-desktop", action="store_true", help="write icon + .desktop launcher and exit")
-    ap.add_argument("--setup-neural", action="store_true", help="install the local ACE-Step neural engine (free, real vocals) and exit")
+    ap.add_argument("--setup-neural", action="store_true", help="install the local ACE-Step neural engine (free, real vocals, needs GPU to be fast) and exit")
+    ap.add_argument("--setup-hosted", action="store_true", help="install gradio-client for the free hosted neural engine (no GPU, no key) and exit")
     args = ap.parse_args()
+
+    if args.setup_hosted:
+        setup_hosted()
+        return
 
     if args.setup_neural:
         setup_neural()

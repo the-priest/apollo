@@ -1,57 +1,48 @@
 # Apollo — AI song forge
 
-Idea in → full song out (music + real vocals) → one-click save. Runs as a desktop **app**: own window, app-menu icon, launch sting. **Free, no API key required.**
+Idea in → full song out (music + vocals) → one-click save. Runs as a desktop app: own window, app-menu icon, launch sting. Two engines, both free, no API key required.
 
-## Quick start
+## Install
 
 ```
 curl -fsSL https://raw.githubusercontent.com/the-priest/apollo/main/install.sh | bash
 ```
 
-Launch **Apollo** from your app menu → pick the **HOSTED** engine → type an idea → GENERATE. Real AI vocals, no key, no GPU needed.
-
-## Four engines
-
-**hosted — FREE real AI vocals, no GPU, no key. ← use this on a laptop.** Runs ACE-Step (open-source, Suno-class) on a shared hosted GPU via Hugging Face. You need nothing but the tiny `gradio-client` package (the installer adds it). First song can take a few minutes because it's a shared free queue; after that it's quick. Optional: drop a free Hugging Face token in the gear drawer to get your own queue/quota.
+Launch **Apollo** from your app menu. To also install the free AI singer in one go:
 
 ```
-apollo --setup-hosted
+curl -fsSL https://raw.githubusercontent.com/the-priest/apollo/main/install.sh | bash -s -- --voice
 ```
 
-**cloud — real vocals, fast, most reliable.** MiniMax `music-2.6-free`. Needs a free key (https://platform.minimax.io → user center → API keys). Best if you want speed and consistency and don't mind one signup.
+## Two engines
 
-**neural — local AI vocals, private + offline.** Same ACE-Step model but on *your* machine. Great on a GPU box (seconds/song); **slow on a no-GPU laptop** (minutes/song). First run downloads ~3.5GB.
+**VOICE — free real AI singer (Kokoro).** A small open-source neural voice model (Apache-2.0) that runs on your CPU — no API key, no GPU, no account. It sings your lyrics over the generated music. One-time setup downloads the model (~310MB):
 
 ```
-apollo --setup-neural
+apollo --setup-voice
 ```
 
-**synth — offline, instant, always works.** numpy synth + espeak-ng. No key, no network, renders in seconds — but the vocals are robotic vocaloid, not real singing. Good for quick sketches.
+After that it's fully offline. First song in a session takes ~10–20s extra to load the model; then it's quick. Voices: male/female, US/UK.
 
-LLM for lyrics/structure: SiliconFlow / DeepSeek-V4-Flash primary, Groq fallback only. (Note: SiliconFlow & Groq only do text/speech — they can't generate full songs, which is why song vocals come from ACE-Step or MiniMax.)
+**SYNTH — instant offline.** Pure numpy synthesis + a robotic espeak voice. No setup, no model, renders in seconds. The voice is robotic (vocaloid-ish), but the music is warm and the whole thing always works with zero dependencies. Good for quick sketches or if the voice model isn't installed.
+
+Lyrics/structure are written by SiliconFlow/DeepSeek if you add a key (gear menu); otherwise a built-in template is used. Groq is fallback only.
 
 ## Auto vs Manual
 
 **AUTO** — type an idea, GENERATE, it writes everything.
 
-**MANUAL · EDIT** — control it yourself:
-- write/paste your own **title, style prompt, lyrics** (hosted/cloud/neural) or **title, lyrics, BPM, key** (synth)
-- tag sections: `[Intro] [Verse] [Pre Chorus] [Chorus] [Bridge] [Outro]` (auto-mapped per engine)
-- **✦ DRAFT WITH AI** fills the fields from your idea so you can edit lines before rendering
+**MANUAL · EDIT** — control it:
+- write/paste your own **title, lyrics, BPM, key**
+- tag sections: `[Intro] [Verse] [Pre Chorus] [Chorus] [Bridge] [Outro]`
+- **✦ DRAFT WITH AI** fills the fields from your idea so you can edit before rendering
 - any finished song has **Edit & re-render**
 
 ## Use
 
-Pick ENGINE / MODE / genre / mood / tempo / voice / length, type the idea, GENERATE. Watch the log, play it. SAVE drops mp3 + lyrics .txt + spec .json into `~/Music/Apollo`. Library list replays saved songs. Defaults to whichever engine is ready (hosted → cloud → neural → synth).
+Pick ENGINE / MODE / genre / mood / tempo / voice / length, type the idea, GENERATE. Watch the log, play it, hit **QUIT** (top-right) to stop the server cleanly. SAVE drops mp3 + lyrics .txt + spec .json into `~/Music/Apollo`. Library list replays saved songs.
 
-Keys/tokens go in the gear drawer (chmod-600 `~/.config/apollo/config.json`) or env: `SILICONFLOW_API_KEY`, `MINIMAX_API_KEY`, `GROQ_API_KEY`.
-
-## Which engine?
-
-- **No-GPU laptop, want it free + real vocals:** hosted.
-- **Want fast + reliable, OK with one free signup:** cloud.
-- **Have a GPU, want private/offline:** neural.
-- **Just need something instant and offline:** synth.
+Optional keys go in the gear drawer (chmod-600 `~/.config/apollo/config.json`) or env: `SILICONFLOW_API_KEY`, `GROQ_API_KEY`.
 
 ## Flags
 
@@ -59,22 +50,22 @@ Keys/tokens go in the gear drawer (chmod-600 `~/.config/apollo/config.json`) or 
 apollo
 ```
 ```
-apollo --setup-hosted
-```
-```
-apollo --setup-neural
+apollo --setup-voice
 ```
 ```
 apollo --install-desktop
 ```
 ```
+apollo --demo
+```
+```
 apollo --no-sound
 ```
 ```
-apollo --demo
+apollo --no-window
 ```
 
-`--demo` renders the offline synth template to ./apollo_demo.wav. `--host`/`--port` to move it.
+`--demo` renders an offline song to ./apollo_demo.wav (optional genre, e.g. `--demo lofi`). `--host`/`--port` to move it (it auto-finds a free port and won't start a second copy if one's already running).
 
 ## Genres
 

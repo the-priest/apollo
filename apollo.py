@@ -16,7 +16,7 @@ except ImportError:
 
 SR = 44100
 APP = "apollo"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 CONF_DIR = os.path.expanduser("~/.config/apollo")
 CONF_PATH = os.path.join(CONF_DIR, "config.json")
 LIB_DIR = os.path.expanduser("~/Music/Apollo")
@@ -29,19 +29,17 @@ DEFAULT_CONF = {
     "siliconflow_model": "deepseek-ai/DeepSeek-V4-Flash",
     "groq_api_key": "",                       # fallback ONLY
     "groq_model": "llama-3.3-70b-versatile",
-    "minimax_api_key": "",
-    "minimax_model": "music-2.6-free",
-    "neural_python": "",          # python interpreter of the ACE-Step venv (set by --setup-neural)
-    "neural_checkpoint": "",      # optional local checkpoint dir; blank = auto-download to ~/.cache/ace-step
-    "neural_steps": 27,           # diffusion steps (higher = better + slower)
-    "neural_guidance": 12.0,
-    "hosted_space": "ACE-Step/ACE-Step",   # free HF Space for no-GPU neural vocals
-    "hf_token": "",               # optional: your own HF token = your own queue/quota (free)
+    "kokoro_voice": "am_michael",             # default Kokoro voice (see VOICES)
     "port": 8585,
 }
 
-NEURAL_DIR = os.path.expanduser("~/.local/share/apollo/neural-venv")
-NEURAL_SECONDS = {"short": 75, "standard": 120, "full": 180}
+KOKORO_DIR = os.path.expanduser("~/.local/share/apollo/kokoro")
+KOKORO_MODEL_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx"
+KOKORO_VOICES_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
+KOKORO_VOICES = {  # label -> kokoro voice id
+    "male":   "am_michael", "male2": "am_adam", "female": "af_heart", "female2": "af_bella",
+    "british_m": "bm_george", "british_f": "bf_emma",
+}
 
 def load_conf():
     conf = dict(DEFAULT_CONF)
@@ -51,7 +49,7 @@ def load_conf():
     except Exception:
         pass
     # env overrides
-    env_map = {"SILICONFLOW_API_KEY": "siliconflow_api_key", "MINIMAX_API_KEY": "minimax_api_key", "GROQ_API_KEY": "groq_api_key"}
+    env_map = {"SILICONFLOW_API_KEY": "siliconflow_api_key", "GROQ_API_KEY": "groq_api_key"}
     for env, key in env_map.items():
         if os.environ.get(env):
             conf[key] = os.environ[env]
@@ -232,23 +230,32 @@ def fit(x, n):
     out = np.zeros(n, dtype=np.float32); out[:len(x)] = x; return out
 
 # ----------------------------------------------------------------------------- genres
+# tone = (master_lowpass_hz, warmth_drive, tape_wow, vinyl_noise, hp_hz) — shapes the final sound
 GENRES = {
     "synthwave": dict(bpm=(96,118), swing=0.50, harm="pad", bass="eights", lead="saw", arp=True, side=True,
-                      kit="electro", verb=0.40, tags="80s synthwave, retrowave, analog synths, gated reverb drums, neon nostalgia"),
+                      kit="electro", verb=0.40, tone=(8500, 1.5, 0.0008, 0.0, 32),
+                      tags="80s synthwave, retrowave, analog synths, gated reverb drums, neon nostalgia"),
     "pop":       dict(bpm=(100,126), swing=0.50, harm="pluck", bass="roots8", lead="tri", arp=False, side=False,
-                      kit="pop", verb=0.28, tags="modern pop, catchy hooks, polished production, radio-ready"),
+                      kit="pop", verb=0.28, tone=(11000, 1.2, 0.0, 0.0, 36),
+                      tags="modern pop, catchy hooks, polished production, radio-ready"),
     "rock":      dict(bpm=(118,150), swing=0.50, harm="power", bass="eights", lead="saw", arp=False, side=False,
-                      kit="rock", verb=0.22, tags="rock, driving electric guitars, live drums, anthemic"),
+                      kit="rock", verb=0.22, tone=(10000, 1.8, 0.0, 0.0, 45),
+                      tags="rock, driving electric guitars, live drums, anthemic"),
     "hiphop":    dict(bpm=(80,96),  swing=0.56, harm="epiano", bass="syncop", lead="sine", arp=False, side=False,
-                      kit="hiphop", verb=0.25, tags="hip-hop, boom bap, heavy 808 bass, head-nod groove"),
+                      kit="hiphop", verb=0.22, tone=(6500, 1.7, 0.0012, 0.006, 30),
+                      tags="hip-hop, boom bap, heavy 808 bass, head-nod groove"),
     "edm":       dict(bpm=(124,130), swing=0.50, harm="pad", bass="eights", lead="saw", arp=True, side=True,
-                      kit="edm", verb=0.30, tags="EDM, festival big-room, four-on-the-floor, euphoric drops"),
+                      kit="edm", verb=0.30, tone=(12000, 1.4, 0.0, 0.0, 34),
+                      tags="EDM, festival big-room, four-on-the-floor, euphoric drops"),
     "lofi":      dict(bpm=(70,86),  swing=0.58, harm="epiano", bass="roots", lead="sine", arp=False, side=False,
-                      kit="lofi", verb=0.35, tags="lo-fi hip hop, dusty vinyl, mellow jazzy chords, rainy-day chill"),
+                      kit="lofi", verb=0.30, tone=(3400, 2.2, 0.0035, 0.010, 40),
+                      tags="lo-fi hip hop, dusty vinyl, mellow jazzy chords, rainy-day chill"),
     "metal":     dict(bpm=(140,180), swing=0.50, harm="power", bass="eights", lead="saw", arp=False, side=False,
-                      kit="metal", verb=0.18, tags="heavy metal, distorted riffing, double kick, aggressive"),
+                      kit="metal", verb=0.18, tone=(9500, 2.4, 0.0, 0.0, 55),
+                      tags="heavy metal, distorted riffing, double kick, aggressive"),
     "folk":      dict(bpm=(88,112), swing=0.52, harm="epiano", bass="roots", lead="tri", arp=False, side=False,
-                      kit="folk", verb=0.30, tags="indie folk, acoustic, warm and intimate, storytelling"),
+                      kit="folk", verb=0.28, tone=(7500, 1.3, 0.0015, 0.004, 50),
+                      tags="indie folk, acoustic, warm and intimate, storytelling"),
 }
 MOOD_TAGS = {"dark":"dark, brooding","upbeat":"upbeat, energetic","melancholy":"melancholic, wistful",
              "aggressive":"aggressive, intense","chill":"chill, relaxed","epic":"epic, cinematic","romantic":"romantic, tender"}
@@ -500,6 +507,70 @@ def render_arp(chord, dur, bps_beat_sec):
     return y
 
 # ----------------------------------------------------------------------------- local engine: spec -> wav
+def _bus_env(x, rel_ms=140):
+    """Smooth level envelope for bus compression (block-wise one-pole, fast)."""
+    import math as _m
+    n = len(x); a = _m.exp(-1.0/(0.001*rel_ms*SR))
+    absx = np.abs(x).astype(np.float32)
+    env = np.empty(n, dtype=np.float32); prev = 0.0
+    for i in range(0, n, 256):
+        blk = absx[i:i+256]
+        mx = float(blk.max()) if len(blk) else 0.0
+        prev = a*prev + (1-a)*mx
+        env[i:i+len(blk)] = prev
+    return env
+
+def tape_wow(x, depth, rate=0.6):
+    """Subtle pitch wobble (wow/flutter) via time-varying resampling - the soul of lo-fi warmth."""
+    if depth <= 0: return x
+    n = len(x); t = np.arange(n)/SR
+    mod = depth*(np.sin(2*np.pi*rate*t) + 0.4*np.sin(2*np.pi*rate*2.7*t+1.1))
+    idx = np.clip(np.arange(n) + mod*SR, 0, n-1)
+    return np.interp(idx, np.arange(n), x).astype(np.float32)
+
+_VINYL = {}
+def vinyl_noise(n, amt):
+    """Dusty vinyl crackle + hiss bed."""
+    if amt <= 0: return np.zeros(n, dtype=np.float32)
+    key = (n, round(amt, 4))
+    if key in _VINYL: return _VINYL[key]
+    rng = np.random.default_rng(0x71717)
+    hiss = fft_filter(rng.standard_normal(n).astype(np.float32), lp=8000, hp=1500) * 0.16
+    crackle = np.zeros(n, dtype=np.float32)
+    n_pops = int(n/SR * 13)
+    pos = rng.integers(0, max(1, n), n_pops)
+    crackle[pos] = (rng.random(n_pops).astype(np.float32)*2-1) * rng.random(n_pops).astype(np.float32)
+    crackle = fft_filter(crackle, hp=2000) * 1.1
+    out = ((hiss + crackle) * amt).astype(np.float32)
+    _VINYL[key] = out
+    return out
+
+def master_chain(L, R, tone):
+    """Warm, cohesive master: tape wow, warmth drive, tone filtering, vinyl, glue, limiter."""
+    lp, drive, wow, vinyl, hp = tone
+    chans = []
+    for ch, off in ((L, 0), (R, 1)):
+        y = ch.astype(np.float32)
+        y = tape_wow(y, wow, rate=0.55 + off*0.07)
+        y = fft_filter(y, lp=lp*1.4, hp=hp)
+        y = np.tanh(y * drive) / math.tanh(drive)
+        y = fft_filter(y, lp=lp)
+        chans.append(y)
+    Lo, Ro = chans
+    mono = (Lo + Ro) * 0.5
+    env = _bus_env(mono, rel_ms=140)
+    thresh, ratio = 0.42, 3.2
+    g = np.ones(len(mono), dtype=np.float32)
+    over = env > thresh
+    g[over] = (thresh + (env[over]-thresh)/ratio) / np.maximum(env[over], 1e-9)
+    g = np.clip(fft_filter(g, lp=55), 0.25, 1.2)
+    Lo = Lo*g; Ro = Ro*g
+    vb = vinyl_noise(len(Lo), vinyl)
+    Lo = Lo + vb; Ro = Ro + vb
+    peak = max(np.max(np.abs(Lo)), np.max(np.abs(Ro)), 1e-9)
+    Lo = np.tanh(Lo/peak*0.99)/math.tanh(0.99); Ro = np.tanh(Ro/peak*0.99)/math.tanh(0.99)
+    return (Lo*0.95).astype(np.float32), (Ro*0.95).astype(np.float32)
+
 def render_local(spec, opts, progress=lambda s: None):
     rng = np.random.default_rng(opts.get("seed", int(time.time())))
     g = GENRES.get(spec.get("_genre", "synthwave"), GENRES["synthwave"])
@@ -514,7 +585,10 @@ def render_local(spec, opts, progress=lambda s: None):
     tr = {k: np.zeros(N, dtype=np.float32) for k in ("drums","bass","harm","arp","lead","vox","snare_send")}
 
     vocal_variant = VOICE_VARIANT.get(opts.get("voice", "male"), "+m3")
-    want_vox = bool(ESPEAK) and opts.get("voice") != "instrumental" and not opts.get("no_vocals")
+    instrumental = opts.get("voice") == "instrumental" or opts.get("no_vocals")
+    use_kokoro = bool(opts.get("use_kokoro")) and not instrumental
+    kokoro_voice_id = opts.get("kokoro_voice_id", "am_michael")
+    want_vox = (bool(ESPEAK) and not instrumental and not use_kokoro)
     melody_cache = {}
     swing = g["swing"]
 
@@ -561,12 +635,30 @@ def render_local(spec, opts, progress=lambda s: None):
                 melody_cache[ck] = lines
             for li, notes in melody_cache[ck]:
                 line_start = sec_start + li*8*beat
-                for (b, d, m, w) in notes:
-                    t = line_start + b*beat
-                    if want_vox:
-                        place(tr["vox"], sing_word(w, midi_hz(m), d*beat*0.95, vocal_variant), t, 1.0)
-                    lead_gain = 0.55 if not want_vox else 0.22
-                    place(tr["lead"], render_lead_note(m, d*beat*0.95, g["lead"]), t, lead_gain)
+                # KOKORO: synthesize the whole lyric line at once (natural timbre), retune to melody
+                if use_kokoro and notes:
+                    line_text = " ".join(w for (_, _, _, w) in notes).strip()
+                    if line_text:
+                        try:
+                            tgt = [midi_hz(m) for (_, _, m, _) in notes]
+                            durs = [d for (_, d, _, _) in notes]
+                            voc = kokoro_sing_line(line_text, tgt, durs, kokoro_voice_id, progress)
+                            # fit the line into its musical window (don't overrun the next line)
+                            win = int(min(7.6, 8*beat) * SR)
+                            if len(voc) > win: voc = voc[:win]
+                            place(tr["vox"], voc, line_start, 1.0)
+                        except Exception as e:
+                            progress(f"kokoro line failed ({e}) — continuing")
+                    # subtle lead doubling under the voice
+                    for (b, d, m, w) in notes:
+                        place(tr["lead"], render_lead_note(m, d*beat*0.95, g["lead"]), line_start + b*beat, 0.16)
+                else:
+                    for (b, d, m, w) in notes:
+                        t = line_start + b*beat
+                        if want_vox:
+                            place(tr["vox"], sing_word(w, midi_hz(m), d*beat*0.95, vocal_variant), t, 1.0)
+                        lead_gain = 0.55 if not want_vox else 0.22
+                        place(tr["lead"], render_lead_note(m, d*beat*0.95, g["lead"]), t, lead_gain)
         elif sec.get("type") in ("intro","outro","solo","bridge"):
             # instrumental motif: arpeggiate scale around chord tones
             for bi, ch in enumerate(chords):
@@ -585,19 +677,37 @@ def render_local(spec, opts, progress=lambda s: None):
         duck = 1.0 - 0.55*np.exp(-ph/0.16)
         for k in ("harm","arp","bass"): tr[k] *= duck.astype(np.float32)
 
-    gains = dict(drums=0.95, bass=0.78, harm=0.42, arp=0.32, lead=1.0, vox=1.05)
+    # vocal bus: warm it up so the robot voice blends instead of poking out.
+    # darker genres (lofi/hiphop/folk) get more taming.
+    tone_lp = g.get("tone", (9000,1.5,0,0,35))[0]
+    if np.max(np.abs(tr["vox"])) > 1e-5:
+        vx = tr["vox"]
+        vx = fft_filter(vx, hp=110, lp=min(6500, tone_lp*1.3))   # remove rumble + harsh top
+        vx = np.tanh(vx*1.3)/math.tanh(1.3)                       # gentle saturation = presence
+        # slap of delay for space (eighth-note)
+        dly = int(0.5*beat*SR)
+        if 0 < dly < N:
+            echo = np.zeros(N, dtype=np.float32)
+            echo[dly:] = vx[:N-dly]*0.22
+            vx = vx + echo
+        tr["vox"] = vx.astype(np.float32)
+
+    gains = dict(drums=0.95, bass=0.80, harm=0.46, arp=0.34, lead=0.9, vox=1.0)
     dry = np.zeros(N, dtype=np.float32)
     for k, gv in gains.items(): addto(dry, tr[k], gv)
     irl, irr = make_reverb_ir(1.7 if g["verb"] > 0.3 else 1.1)
     send = np.zeros(N, dtype=np.float32)
-    addto(send, tr["vox"], g["verb"]); addto(send, tr["lead"], 0.25); addto(send, tr["snare_send"], g["verb"]*0.6)
+    addto(send, tr["vox"], g["verb"]*0.8); addto(send, tr["lead"], 0.22); addto(send, tr["snare_send"], g["verb"]*0.6)
     wetL = fit(fft_convolve(send, irl), N); wetR = fit(fft_convolve(send, irr), N)
     width = np.zeros(N, dtype=np.float32); addto(width, tr["harm"], 0.18); addto(width, tr["arp"], 0.22)
     L = dry - width*0.5 + wetL
     R = dry + width*0.5 + wetR
+    # pre-normalize before the master chain
     peak = max(np.max(np.abs(L)), np.max(np.abs(R)), 1e-9)
-    L = soft_drive(L/peak*0.92, 1.25); R = soft_drive(R/peak*0.92, 1.25)
-    return (L*0.97).astype(np.float32), (R*0.97).astype(np.float32), total
+    L = (L/peak*0.85).astype(np.float32); R = (R/peak*0.85).astype(np.float32)
+    progress("mastering (warmth + tone)")
+    L, R = master_chain(L, R, g.get("tone", (9000, 1.5, 0.0, 0.0, 35)))
+    return L, R, total
 
 def write_wav(path, L, R):
     data = np.empty(len(L)*2, dtype=np.int16)
@@ -801,9 +911,6 @@ def manual_local_spec(opts, manual):
     return validate_spec(spec, genre)
 
 # ----------------------------------------------------------------------------- cloud engine (MiniMax music-2.6)
-MINIMAX_ERR = {1002:"rate limit — wait a minute and retry",1004:"auth failed — check MiniMax API key",
-               1008:"insufficient MiniMax balance",1026:"content flagged by MiniMax moderation",
-               2013:"invalid parameters",2049:"invalid MiniMax API key"}
 
 def draft_brief(opts, progress):
     """LLM song brief: (title, style_prompt, tagged lyrics). Raises on LLM failure."""
@@ -823,340 +930,118 @@ Song idea: {opts.get('idea') or 'your choice — surprise me'}"""
     if not lyrics.strip(): raise ValueError("empty lyrics")
     return title, style, lyrics
 
-def llm_cloud_brief(opts, progress):
-    g = GENRES[opts["genre"]]
-    mood = MOOD_TAGS.get(opts.get("mood",""), opts.get("mood","")) if opts.get("mood") != "auto" else ""
-    voice = {"male":"male vocals","female":"female vocals","instrumental":"instrumental"}.get(opts.get("voice","auto"), "")
-    base_style = ", ".join(x for x in (g["tags"], mood, voice, opts.get("tempo","") + " tempo" if opts.get("tempo") not in (None,"auto") else "") if x)
-    try:
-        title, style, lyrics = draft_brief(opts, progress)
-        return title, style, lyrics, False
-    except Exception as e:
-        progress(f"no LLM lyrics ({e}) — letting MiniMax write them")
-        style = (base_style + ". " + (opts.get("idea") or ""))[:1900]
-        return "Untitled", style, "", True
 
-def generate_cloud(opts, progress):
-    if not CONF.get("minimax_api_key"):
-        raise RuntimeError("cloud engine needs a MiniMax API key — set it in settings (free tier works: model music-2.6-free)")
-    manual = opts.get("manual") if opts.get("mode") == "manual" else None
-    if manual is not None:
-        g = GENRES[opts["genre"]]
-        title = (manual.get("title") or "").strip()[:80] or "Untitled"
-        style = (manual.get("style") or "").strip()[:1900] or g["tags"]
-        lyrics = (manual.get("lyrics") or "").strip()[:3400]
-        auto_lyrics = not lyrics
-        progress("rendering your manual brief")
-    else:
-        title, style, lyrics, auto_lyrics = llm_cloud_brief(opts, progress)
-    payload = {"model": CONF.get("minimax_model", "music-2.6-free"),
-               "prompt": style,
-               "output_format": "hex",
-               "audio_setting": {"sample_rate": 44100, "bitrate": 256000, "format": "mp3"}}
-    if opts.get("voice") == "instrumental":
-        payload["is_instrumental"] = True
-    elif auto_lyrics:
-        payload["lyrics_optimizer"] = True
-    else:
-        payload["lyrics"] = lyrics
-    progress("MiniMax is rendering the song (this takes 1-3 min)")
-    data = _post_json("https://api.minimax.io/v1/music_generation", payload,
-                      {"Authorization": f"Bearer {CONF['minimax_api_key']}"}, timeout=420)
-    code = (data.get("base_resp") or {}).get("status_code", -1)
-    if code != 0:
-        raise RuntimeError(f"MiniMax error {code}: {MINIMAX_ERR.get(code, (data.get('base_resp') or {}).get('status_msg','unknown'))}")
-    hexstr = (data.get("data") or {}).get("audio") or ""
-    if not hexstr: raise RuntimeError("MiniMax returned no audio")
-    audio = bytes.fromhex(hexstr)
-    return title, lyrics, audio, style
+# ----------------------------------------------------------------------------- kokoro engine (free local neural voice, no key, CPU)
+_KOKORO = {"obj": None, "checked": False}
 
-# ----------------------------------------------------------------------------- hosted engine (free HF Space, no GPU, no key, real vocals)
-_HOSTED_OK = {}
-def hosted_available():
-    """gradio_client present? (the only dep for the hosted free path)"""
-    if "v" in _HOSTED_OK: return _HOSTED_OK["v"]
+def kokoro_paths():
+    return (os.path.join(KOKORO_DIR, "kokoro-v1.0.onnx"),
+            os.path.join(KOKORO_DIR, "voices-v1.0.bin"))
+
+def kokoro_files_present():
+    m, v = kokoro_paths()
+    return os.path.isfile(m) and os.path.getsize(m) > 10_000_000 and os.path.isfile(v)
+
+def kokoro_available():
+    """True if the kokoro-onnx package is importable AND model files are downloaded."""
+    if not kokoro_files_present():
+        return False
     try:
-        import gradio_client  # noqa
-        ok = True
+        import kokoro_onnx  # noqa
+        return True
     except Exception:
+        return False
+
+def _dl(url, dst, progress):
+    """Download with a simple progress log."""
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    tmp = dst + ".part"
+    req = urllib.request.Request(url, headers={"User-Agent": "apollo"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        total = int(r.headers.get("Content-Length", 0))
+        done = 0; chunk = 1 << 16; last = 0
+        with open(tmp, "wb") as f:
+            while True:
+                b = r.read(chunk)
+                if not b: break
+                f.write(b); done += len(b)
+                if total and done - last > total // 20:
+                    last = done; progress(f"  downloading {os.path.basename(dst)}: {done*100//total}%")
+    os.replace(tmp, dst)
+
+def setup_kokoro(progress=print):
+    """Install kokoro-onnx (if missing) and download the model files from GitHub. One shot."""
+    try:
+        import kokoro_onnx  # noqa
+        progress("[apollo] kokoro-onnx already installed")
+    except Exception:
+        progress("[apollo] installing kokoro-onnx (one-time)…")
         ok = False
-    _HOSTED_OK["v"] = ok
-    return ok
-
-def _hosted_pick_endpoint(client):
-    """Find the text->music endpoint on whatever ACE-Step Space build is live."""
-    try:
-        info = client.view_api(return_format="dict") or {}
-    except Exception:
-        info = {}
-    named = (info.get("named_endpoints") or {})
-    # prefer endpoints whose name screams generation
-    pref = [n for n in named if any(k in n.lower() for k in ("generate", "text2music", "text_to_music", "music", "run", "predict"))]
-    order = pref + [n for n in named if n not in pref]
-    return order
-
-def generate_hosted(opts, progress):
-    if not hosted_available():
-        raise RuntimeError("hosted engine needs the gradio-client package — run:  python3 apollo.py --setup-hosted  "
-                           "(tiny, ~1 min, no GPU). Then this works with no key.")
-    from gradio_client import Client
-    if opts.get("genre", "auto") == "auto":
-        opts["genre"] = random.choice(list(GENRES))
-    title, style, lyrics = neural_brief(opts, progress)
-    voice = opts.get("voice", "auto")
-    if voice == "instrumental":
-        lyrics = "[inst]"
-    elif voice in ("male", "female") and "vocal" not in style.lower():
-        style = f"{style}, {voice} vocals"
-    lyrics = normalize_lyric_tags(lyrics) or "[inst]"
-    dur = float(NEURAL_SECONDS.get(opts.get("length", "standard"), 120))
-    space = (CONF.get("hosted_space") or "ACE-Step/ACE-Step").strip()
-    token = (CONF.get("hf_token") or "").strip() or None
-    progress(f"connecting to free neural Space ({space})")
-    client = None; cerr = None
-    for kwargs in ([{"hf_token": token}] if token else []) + ([{"token": token}] if token else []) + [{}]:
-        try:
-            client = Client(space, verbose=False, **kwargs); break
-        except TypeError:
-            try: client = Client(space, **kwargs); break
-            except Exception as e: cerr = e
-        except Exception as e:
-            cerr = e
-    if client is None:
-        raise RuntimeError(f"couldn't reach the free Space ({cerr}). It may be sleeping/busy — retry in a minute, "
-                           f"or use the cloud engine (free MiniMax key) for reliability.")
-    eps = _hosted_pick_endpoint(client)
-    if not eps:
-        raise RuntimeError("the free Space changed its API and no generation endpoint was found. "
-                           "Use the cloud engine for now; I can point Apollo at a new Space later.")
-    # ACE-Step Space signature: (format, audio_duration, prompt, lyrics, infer_step, guidance_scale, ...)
-    attempts = [
-        dict(format="wav", audio_duration=dur, prompt=style, lyrics=lyrics,
-             infer_step=int(CONF.get("neural_steps", 27)), guidance_scale=float(CONF.get("neural_guidance", 12.0))),
-        dict(prompt=style, lyrics=lyrics, audio_duration=dur),
-        dict(prompt=style, lyrics=lyrics),
-    ]
-    last_err = None; result = None
-    progress("queued on the free Space — first run can take a few minutes, hang tight")
-    for ep in eps[:3]:
-        for kw in attempts:
+        for extra in ([], ["--break-system-packages"], ["--user", "--break-system-packages"]):
             try:
-                job = client.submit(api_name=ep, **kw)
-                # stream status while it runs
-                while not job.done():
-                    try:
-                        st = job.status()
-                        if getattr(st, "rank", None) is not None:
-                            progress(f"queue position {st.rank}" + (f", ~{int(st.eta)}s" if getattr(st, "eta", None) else ""))
-                    except Exception: pass
-                    time.sleep(2.0)
-                result = job.result()
-                break
-            except TypeError as e:
-                last_err = e; continue   # wrong kwargs for this endpoint, try simpler
-            except Exception as e:
-                last_err = e; continue
-        if result is not None: break
-    if result is None:
-        raise RuntimeError(f"the free Space didn't return audio ({last_err}). It's likely overloaded — "
-                           f"retry shortly, or use the cloud engine (fast, free key).")
-    # result may be a filepath, a dict with 'value'/'name', or a tuple containing one
-    path = _hosted_extract_audio(result)
-    if not path or not os.path.isfile(path):
-        raise RuntimeError("the free Space returned an unexpected result. Try again, or use the cloud engine.")
-    mp3 = maybe_mp3(path) if path.endswith(".wav") else path
-    dst = os.path.join(TMP_DIR, f"{opts.get('_jid','hosted')}{os.path.splitext(mp3)[1]}")
-    shutil.copyfile(mp3, dst)
-    with open(dst, "rb") as f: audio = f.read()
-    return title, lyrics, audio, style, os.path.basename(dst)
-
-def _hosted_extract_audio(res):
-    """Dig an audio filepath out of whatever shape the Space returned."""
-    def from_one(x):
-        if isinstance(x, str) and os.path.isfile(x): return x
-        if isinstance(x, dict):
-            for k in ("name", "value", "path", "audio"):
-                v = x.get(k)
-                if isinstance(v, str) and os.path.isfile(v): return v
-        return None
-    p = from_one(res)
-    if p: return p
-    if isinstance(res, (list, tuple)):
-        for item in res:
-            p = from_one(item) or (_hosted_extract_audio(item) if isinstance(item, (list, tuple, dict)) else None)
-            if p: return p
-    return None
-
-# ----------------------------------------------------------------------------- neural engine (ACE-Step 1.5, fully local, real vocals)
-_NEURAL_TAG_RX = re.compile(r"\[(intro|verse|pre[\s-]?chorus|chorus|bridge|solo|hook|outro|inst|instrumental|break)\b[^\]]*\]", re.I)
-
-def normalize_lyric_tags(text):
-    """ACE-Step wants lowercase [verse]/[chorus]/[inst] tags. Map ours onto its vocabulary."""
-    def repl(m):
-        t = re.sub(r"[\s-]", "", m.group(1).lower())
-        t = {"prechorus": "chorus", "hook": "chorus", "solo": "inst",
-             "instrumental": "inst", "break": "inst", "intro": "inst", "outro": "inst"}.get(t, t)
-        return "[" + t + "]"
-    return _NEURAL_TAG_RX.sub(repl, text or "")
-
-def neural_python_path():
-    """The interpreter that has ACE-Step installed: configured venv, else this interpreter."""
-    p = (CONF.get("neural_python") or "").strip()
-    if p and os.path.isfile(p): return p
-    cand = os.path.join(NEURAL_DIR, "bin", "python")
-    if os.path.isfile(cand): return cand
-    return sys.executable
-
-_NEURAL_OK = {}
-def neural_available():
-    py = neural_python_path()
-    if py in _NEURAL_OK: return _NEURAL_OK[py]
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "kokoro-onnx", "soundfile", *extra])
+                ok = True; break
+            except subprocess.CalledProcessError:
+                continue
+        if not ok:
+            progress("[apollo] ✗ pip install failed. Try manually:  pip install kokoro-onnx soundfile --break-system-packages")
+            return False
+    m, v = kokoro_paths()
     try:
-        r = subprocess.run([py, "-c", "import acestep.pipeline_ace_step"],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=40)
-        ok = (r.returncode == 0)
-    except Exception:
-        ok = False
-    _NEURAL_OK[py] = ok
+        if not (os.path.isfile(m) and os.path.getsize(m) > 10_000_000):
+            progress("[apollo] downloading voice model (~310MB, one-time)…")
+            _dl(KOKORO_MODEL_URL, m, progress)
+        if not os.path.isfile(v):
+            progress("[apollo] downloading voices…")
+            _dl(KOKORO_VOICES_URL, v, progress)
+    except Exception as e:
+        progress(f"[apollo] ✗ model download failed: {e}")
+        progress(f"[apollo]   you can grab them manually into {KOKORO_DIR}/ :")
+        progress(f"[apollo]   {KOKORO_MODEL_URL}")
+        progress(f"[apollo]   {KOKORO_VOICES_URL}")
+        return False
+    _KOKORO["checked"] = False; _KOKORO["obj"] = None
+    ok = kokoro_available()
+    progress(f"[apollo] kokoro voice engine {'READY' if ok else 'install incomplete — check above'}.")
     return ok
 
-NEURAL_WORKER = r'''
-import sys, json, inspect, os
-args = json.load(open(sys.argv[1]))
-def log(m): print("NEURAL: " + m, flush=True)
-try:
-    import torch
-except Exception as e:
-    print(json.dumps({"ok": False, "error": "torch not installed in neural env: %s" % e})); sys.exit(0)
-try:
-    from acestep.pipeline_ace_step import ACEStepPipeline
-except Exception:
-    try:
-        from acestep import ACEStepPipeline
-    except Exception as e:
-        print(json.dumps({"ok": False, "error": "ACE-Step not importable: %s" % e})); sys.exit(0)
+def _kokoro_obj():
+    if _KOKORO["obj"] is not None: return _KOKORO["obj"]
+    from kokoro_onnx import Kokoro
+    m, v = kokoro_paths()
+    _KOKORO["obj"] = Kokoro(m, v)
+    return _KOKORO["obj"]
 
-if torch.cuda.is_available():
-    device, bf16 = "cuda", True
-elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-    device, bf16 = "mps", False
-else:
-    device, bf16 = "cpu", False
-log("device=%s" % device)
+def _resample_to(x, sr_in, sr_out):
+    if sr_in == sr_out or len(x) == 0: return x.astype(np.float32)
+    n_out = int(round(len(x) * sr_out / sr_in))
+    return np.interp(np.linspace(0, len(x), n_out, endpoint=False),
+                     np.arange(len(x)), x).astype(np.float32)
 
-def filt(fn, want):
-    try: ok = set(inspect.signature(fn).parameters)
-    except Exception: return want
-    return {k: v for k, v in want.items() if k in ok}
+def _pitch_to(x, ratio):
+    """Resample-based pitch shift (changes length); used to retune speech toward a target note."""
+    if abs(ratio - 1.0) < 1e-3 or len(x) == 0: return x
+    idx = np.arange(0, len(x), ratio)
+    return np.interp(idx, np.arange(len(x)), x).astype(np.float32)
 
-ctor = {"checkpoint_path": args.get("checkpoint") or None, "checkpoint_dir": args.get("checkpoint") or None,
-        "bf16": bf16, "torch_compile": False, "device_id": 0,
-        "cpu_offload": (device == "cuda"), "overlapped_decode": (device == "cuda")}
-log("loading model (first run downloads ~3.5GB)…")
-pipe = ACEStepPipeline(**filt(ACEStepPipeline.__init__, ctor))
-
-seed = int(args.get("seed", 0))
-call = {"audio_duration": float(args.get("duration", 120)), "prompt": args["prompt"], "lyrics": args["lyrics"],
-        "infer_step": int(args.get("steps", 27)), "guidance_scale": float(args.get("guidance", 12.0)),
-        "save_path": args["out"], "format": "wav",
-        "manual_seeds": str(seed), "actual_seeds": [seed], "manual_seed": seed}
-call = filt(pipe.__call__, call)
-log("generating %ss, %s steps…" % (int(call.get("audio_duration", 0)), call.get("infer_step")))
-res = pipe(**call)
-
-out = args["out"]
-if not os.path.isfile(out):
-    cand = None
-    if isinstance(res, str) and os.path.isfile(res): cand = res
-    elif isinstance(res, (list, tuple)) and res and isinstance(res[0], str) and os.path.isfile(res[0]): cand = res[0]
-    if cand:
-        out = cand
-    else:
-        try:
-            import soundfile as sf, numpy as np
-            arr = res[0] if isinstance(res, (list, tuple)) else res
-            arr = np.asarray(arr)
-            sr = getattr(getattr(pipe, "config", None), "sampling_rate", 44100)
-            sf.write(out, arr.T if arr.ndim == 2 and arr.shape[0] < arr.shape[1] else arr, int(sr))
-        except Exception as e:
-            print(json.dumps({"ok": False, "error": "no output produced: %s" % e})); sys.exit(0)
-print(json.dumps({"ok": True, "file": out}))
-'''
-
-def write_neural_worker():
-    os.makedirs(CONF_DIR, exist_ok=True)
-    path = os.path.join(CONF_DIR, "neural_worker.py")
-    with open(path, "w") as f: f.write(NEURAL_WORKER)
-    return path
-
-def neural_brief(opts, progress):
-    """(title, style_prompt, lyrics) for the neural engine."""
-    g = GENRES[opts["genre"]]
-    manual = opts.get("manual") if opts.get("mode") == "manual" else None
-    if manual is not None:
-        title = (manual.get("title") or "").strip()[:80] or "Untitled"
-        style = (manual.get("style") or "").strip()[:600] or g["tags"]
-        lyrics = (manual.get("lyrics") or "").strip()
-        return title, style, lyrics
-    if opts.get("voice") == "instrumental":
-        mood = MOOD_TAGS.get(opts.get("mood", ""), "") if opts.get("mood") != "auto" else ""
-        style = ", ".join(x for x in (g["tags"], mood, "instrumental") if x)
-        return "Untitled", style, "[inst]"
-    try:
-        return draft_brief(opts, progress)
-    except Exception as e:
-        progress(f"no LLM ({e}) — using a built-in lyric template")
-        spec = template_spec(opts["genre"])
-        lyrics = "\n\n".join((f"[{s['type']}]\n" + "\n".join(s["lyrics"])) if s["lyrics"] else f"[{s['type']}]"
-                             for s in spec["sections"])
-        mood = MOOD_TAGS.get(opts.get("mood", ""), "") if opts.get("mood") != "auto" else ""
-        voice = {"male": "male vocals", "female": "female vocals"}.get(opts.get("voice", ""), "")
-        style = ", ".join(x for x in (g["tags"], mood, voice) if x)
-        return spec["title"], style, lyrics
-
-def generate_neural(opts, progress):
-    if not neural_available():
-        raise RuntimeError("neural engine isn't installed yet — run:  python3 apollo.py --setup-neural  "
-                           "(one-time, downloads ACE-Step + PyTorch). Until then use the cloud or synth engine.")
-    if opts.get("genre", "auto") == "auto":
-        opts["genre"] = random.choice(list(GENRES))
-    title, style, lyrics = neural_brief(opts, progress)
-    voice = opts.get("voice", "auto")
-    if voice == "instrumental":
-        lyrics = "[inst]"
-    elif voice in ("male", "female") and "vocal" not in style.lower():
-        style = f"{style}, {voice} vocals"
-    lyrics = normalize_lyric_tags(lyrics) or "[inst]"
-    worker = write_neural_worker()
-    out = os.path.join(TMP_DIR, f"{opts.get('_jid','neural')}.wav")
-    payload = {"prompt": style[:600], "lyrics": lyrics[:3000], "out": out,
-               "duration": NEURAL_SECONDS.get(opts.get("length", "standard"), 120),
-               "steps": int(CONF.get("neural_steps", 27)), "guidance": float(CONF.get("neural_guidance", 12.0)),
-               "seed": random.randrange(2**31), "checkpoint": (CONF.get("neural_checkpoint") or "").strip()}
-    argf = os.path.join(TMP_DIR, f"{opts.get('_jid','neural')}_args.json")
-    with open(argf, "w") as f: json.dump(payload, f)
-    py = neural_python_path()
-    progress("starting ACE-Step (first run downloads the model — be patient)")
-    proc = subprocess.Popen([py, worker, argf], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            text=True, bufsize=1)
-    result = None
-    for line in proc.stdout:
-        line = line.rstrip()
-        if not line: continue
-        if line.startswith("NEURAL: "):
-            progress(line[8:])
-        elif line.startswith("{") and '"ok"' in line:
-            try: result = json.loads(line)
-            except Exception: pass
-        elif any(k in line for k in ("%|", "Download", "Loading", "it/s", "s/it")):
-            progress(line[:90])
-    proc.wait(timeout=5)
-    if not result or not result.get("ok"):
-        raise RuntimeError((result or {}).get("error", "neural render failed — check the terminal log"))
-    src = result["file"]
-    mp3 = maybe_mp3(src) if src.endswith(".wav") else src
-    with open(mp3, "rb") as f: audio = f.read()
-    return title, lyrics, audio, style, os.path.basename(mp3)
+def kokoro_sing_line(text, target_hz_list, dur_list, voice_id, progress):
+    """Synthesize a lyric line with Kokoro, then nudge each word toward its melody note.
+    Returns a 44100Hz mono float array. This gives a natural-timbre half-sung vocal."""
+    ko = _kokoro_obj()
+    samples, sr = ko.create(text, voice=voice_id, speed=1.0)
+    samples = _resample_to(np.asarray(samples, dtype=np.float32), sr, SR)
+    # estimate the spoken pitch so we can shift toward the target melody note
+    f0 = estimate_f0(samples) or 130.0
+    # gentle: pull the whole line toward the average target note (keeps it natural, not chipmunk)
+    if target_hz_list:
+        tgt = float(np.median([h for h in target_hz_list if h])) if any(target_hz_list) else f0
+        # fold target into a comfortable speaking range near f0
+        while tgt > f0 * 1.5: tgt /= 2
+        while tgt < f0 / 1.5: tgt *= 2
+        ratio = np.clip(tgt / f0, 0.8, 1.25)
+        samples = _pitch_to(samples, 1.0 / ratio)  # shift pitch up = compress time
+    peak = float(np.abs(samples).max()) or 1.0
+    return (samples / peak * 0.9).astype(np.float32)
 
 # ----------------------------------------------------------------------------- jobs
 JOBS = {}
@@ -1171,49 +1056,47 @@ def run_job(jid, opts):
     def progress(msg):
         job["stage"] = msg; job["log"].append(f"[{time.strftime('%H:%M:%S')}] {msg}")
     try:
-        engine = opts.get("engine", "local")
         opts["_jid"] = jid
         if opts.get("genre", "auto") == "auto":
             opts["genre"] = random.choice(list(GENRES))
-        if engine == "hosted":
-            title, lyrics, audio, style, fname = generate_hosted(opts, progress)
-            with open(os.path.join(TMP_DIR, fname), "wb") as f: f.write(audio)
-            job.update(title=title, lyrics=lyrics, file=f"/audio/{fname}", style=style,
-                       meta=f"hosted neural · ACE-Step Space · {opts['genre']} · free, no key")
-        elif engine == "neural":
-            title, lyrics, audio, style, fname = generate_neural(opts, progress)
-            with open(os.path.join(TMP_DIR, fname), "wb") as f: f.write(audio)
-            job.update(title=title, lyrics=lyrics, file=f"/audio/{fname}", style=style,
-                       meta=f"neural · ACE-Step · {opts['genre']} · local model")
-        elif engine == "cloud":
-            title, lyrics, audio, style = generate_cloud(opts, progress)
-            fname = f"{jid}.mp3"
-            with open(os.path.join(TMP_DIR, fname), "wb") as f: f.write(audio)
-            job.update(title=title, lyrics=lyrics, file=f"/audio/{fname}", style=style,
-                       meta=f"cloud · minimax {CONF.get('minimax_model','')}")
+
+        # decide the vocal source
+        engine = opts.get("engine", "synth")
+        if engine == "kokoro":
+            if not kokoro_available():
+                raise RuntimeError("the voice engine isn't installed yet — run:  apollo --setup-voice  "
+                                   "(one-time: installs the free Kokoro voice + model, no key, no GPU).")
+            opts["use_kokoro"] = True
+            opts["kokoro_voice_id"] = KOKORO_VOICES.get(opts.get("voice", "male"),
+                                                        CONF.get("kokoro_voice", "am_michael"))
+
+        # build the song spec (LLM if a key is set, else the built-in template)
+        if opts.get("mode") == "manual" and opts.get("manual"):
+            progress("building spec from your manual edit")
+            spec = manual_local_spec(opts, opts["manual"]); src = "you"
         else:
-            if opts.get("mode") == "manual" and opts.get("manual"):
-                progress("building spec from your manual edit")
-                spec = manual_local_spec(opts, opts["manual"]); src = "you"
-            else:
-                try:
-                    spec = llm_local_spec(opts, progress)
-                    src = "deepseek" if CONF.get("siliconflow_api_key") else "groq"
-                except LLMError as e:
-                    progress(f"LLM unavailable ({e}) — using built-in template, set a SiliconFlow key for real AI composition")
-                    spec = validate_spec(template_spec(opts["genre"]), opts["genre"])
-                    spec["_genre"] = opts["genre"]; src = "template"
-            opts["seed"] = random.randrange(2**31)
-            L, R, dur = render_local(spec, opts, progress)
-            wav = os.path.join(TMP_DIR, f"{jid}.wav")
-            progress("writing audio")
-            write_wav(wav, L, R)
-            out = maybe_mp3(wav)
-            lyrics = "\n\n".join(f"[{s['type'].title()}]\n" + "\n".join(s["lyrics"]) if s["lyrics"] else f"[{s['type'].title()}]"
-                                 for s in spec["sections"])
-            job.update(title=spec["title"], lyrics=lyrics, file=f"/audio/{os.path.basename(out)}",
-                       meta=f"local · {spec['_genre']} · {spec['key']} · {spec['bpm']} bpm · {int(dur//60)}:{int(dur%60):02d} · composed by {src}",
-                       spec=spec, bpm=spec["bpm"], key=spec["key"])
+            try:
+                spec = llm_local_spec(opts, progress)
+                src = "deepseek" if CONF.get("siliconflow_api_key") else "groq"
+            except LLMError as e:
+                progress(f"no AI lyrics ({e}) — using a built-in template; set a SiliconFlow key for custom lyrics")
+                spec = validate_spec(template_spec(opts["genre"]), opts["genre"])
+                spec["_genre"] = opts["genre"]; src = "template"
+
+        opts["seed"] = random.randrange(2**31)
+        if engine == "kokoro":
+            progress("rendering music + Kokoro voice (first run loads the model, ~10–20s)")
+        L, R, dur = render_local(spec, opts, progress)
+        wav = os.path.join(TMP_DIR, f"{jid}.wav")
+        progress("writing audio")
+        write_wav(wav, L, R)
+        out = maybe_mp3(wav)
+        lyrics = "\n\n".join(f"[{s['type'].title()}]\n" + "\n".join(s["lyrics"]) if s["lyrics"] else f"[{s['type'].title()}]"
+                             for s in spec["sections"])
+        voice_tag = "kokoro voice" if engine == "kokoro" else ("instrumental" if opts.get("voice") == "instrumental" else "synth voice")
+        job.update(title=spec["title"], lyrics=lyrics, file=f"/audio/{os.path.basename(out)}",
+                   meta=f"{spec['_genre']} · {spec['key']} · {spec['bpm']} bpm · {int(dur//60)}:{int(dur%60):02d} · {voice_tag} · lyrics by {src}",
+                   spec=spec, bpm=spec["bpm"], key=spec["key"])
         job["stage"] = "done"; job["done"] = True
         progress("done")
     except Exception as e:
@@ -1430,11 +1313,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/": return self._send(200, PAGE.encode(), "text/html; charset=utf-8")
             if path == "/api/config":
                 return self._send(200, {
-                    "siliconflow": masked(CONF["siliconflow_api_key"]), "minimax": masked(CONF["minimax_api_key"]),
+                    "siliconflow": masked(CONF["siliconflow_api_key"]),
                     "groq": masked(CONF["groq_api_key"]), "sf_model": CONF["siliconflow_model"],
-                    "mm_model": CONF["minimax_model"], "espeak": bool(ESPEAK), "lib": LIB_DIR,
-                    "neural": neural_available(), "neural_python": neural_python_path(),
-                    "neural_steps": CONF.get("neural_steps", 27), "hosted": hosted_available()})
+                    "espeak": bool(ESPEAK), "lib": LIB_DIR,
+                    "kokoro": kokoro_available(), "kokoro_voice": CONF.get("kokoro_voice", "am_michael")})
             if path == "/api/status":
                 job = JOBS.get(q.get("id", ""))
                 if not job: return self._send(404, {"error": "unknown job"})
@@ -1474,13 +1356,16 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/api/save":
                 return self._send(200, {"path": save_job(str(body.get("id", "")))})
             if self.path == "/api/config":
-                for k in ("siliconflow_api_key","minimax_api_key","groq_api_key","siliconflow_model","minimax_model","neural_python","neural_checkpoint","hf_token","hosted_space"):
+                for k in ("siliconflow_api_key","groq_api_key","siliconflow_model","kokoro_voice"):
                     v = body.get(k)
                     if isinstance(v, str) and v.strip() and "…" not in v: CONF[k] = v.strip()
-                if isinstance(body.get("neural_steps"), (int, float)): CONF["neural_steps"] = int(body["neural_steps"])
-                _NEURAL_OK.clear(); _HOSTED_OK.clear()
                 save_conf(CONF)
                 return self._send(200, {"ok": True})
+            if self.path == "/api/quit":
+                self._send(200, {"ok": True})
+                print("[apollo] quit requested — shutting down.")
+                threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0)), daemon=True).start()
+                return
             return self._send(404, {"error": "not found"})
         except Exception as e:
             try: self._send(500, {"error": str(e)})
@@ -1504,9 +1389,11 @@ body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);padding:0 1
 header{display:flex;align-items:baseline;gap:12px;padding:22px 0 10px}
 .mark{font:700 13px var(--mono);letter-spacing:.34em;color:var(--amber)}
 .sub{font:11px var(--mono);letter-spacing:.18em;color:var(--dim)}
-header button{margin-left:auto;background:none;border:1px solid var(--line);color:var(--dim);
+header button{background:none;border:1px solid var(--line);color:var(--dim);
   font:11px var(--mono);letter-spacing:.12em;padding:6px 12px;border-radius:8px;cursor:pointer}
 header button:hover{color:var(--ink);border-color:var(--dim)}
+#gear{margin-left:auto}
+#quit:hover{color:var(--red);border-color:var(--red)}
 #vu{display:block;width:100%;height:54px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
 .lbl{font:10px var(--mono);letter-spacing:.26em;color:var(--dim);margin:20px 0 8px}
 textarea{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--ink);
@@ -1559,15 +1446,14 @@ pre{font:12.5px/1.7 var(--mono);color:var(--ink);background:var(--panel2);border
 <header>
   <span class="mark">APOLLO</span><span class="sub">song forge</span>
   <button id="gear" aria-label="settings">API KEYS</button>
+  <button id="quit" aria-label="quit Apollo" title="Stop Apollo (closes the server)">QUIT</button>
 </header>
 <canvas id="vu" width="1400" height="108" aria-hidden="true"></canvas>
 
 <div id="drawer">
-  <label>SILICONFLOW API KEY — composes structure + lyrics (DeepSeek)</label><input id="k_sf" autocomplete="off" placeholder="sk-…">
-  <label>MINIMAX API KEY — cloud engine, real sung vocals (free tier ok)</label><input id="k_mm" autocomplete="off" placeholder="…">
+  <label>SILICONFLOW API KEY — writes structure + lyrics (DeepSeek). Optional — blank uses a built-in template.</label><input id="k_sf" autocomplete="off" placeholder="sk-…">
   <label>GROQ API KEY — fallback only, used if SiliconFlow fails</label><input id="k_gq" autocomplete="off" placeholder="gsk_…">
   <label>SILICONFLOW MODEL</label><input id="m_sf">
-  <label>MINIMAX MODEL (music-2.6-free / music-2.6)</label><input id="m_mm">
   <div class="row" style="margin-top:14px"><button class="btn amber" id="saveKeys">Save keys</button></div>
   <div class="hint" id="confHint"></div>
 </div>
@@ -1625,14 +1511,14 @@ the big hook"></textarea>
 </div>
 <script>
 const GROUPS={
- engine:[["hosted","HOSTED · FREE AI VOCALS"],["cloud","CLOUD · REAL VOCALS"],["neural","NEURAL · LOCAL (GPU)"],["local","SYNTH · OFFLINE"]],
+ engine:[["kokoro","VOICE · REAL AI SINGER (FREE)"],["synth","SYNTH · INSTANT ROBOVOX"]],
  mode:[["auto","AUTO"],["manual","MANUAL · EDIT"]],
  genre:[["auto","AUTO"],["synthwave","SYNTHWAVE"],["pop","POP"],["rock","ROCK"],["hiphop","HIP-HOP"],["edm","EDM"],["lofi","LO-FI"],["metal","METAL"],["folk","FOLK"]],
  mood:[["auto","AUTO"],["dark","DARK"],["upbeat","UPBEAT"],["melancholy","MELANCHOLY"],["aggressive","AGGRESSIVE"],["chill","CHILL"],["epic","EPIC"],["romantic","ROMANTIC"]],
  tempo:[["auto","AUTO"],["slow","SLOW"],["mid","MID"],["fast","FAST"]],
  voice:[["auto","AUTO"],["male","MALE"],["female","FEMALE"],["instrumental","INSTRUMENTAL"],["croak","CROAK*"],["whisper","WHISPER*"]],
  length:[["standard","STANDARD"],["short","SHORT"],["full","FULL"]]};
-const sel={engine:"local",mode:"auto",genre:"auto",mood:"auto",tempo:"auto",voice:"auto",length:"standard"};
+const sel={engine:"kokoro",mode:"auto",genre:"lofi",mood:"auto",tempo:"auto",voice:"male",length:"standard"};
 const $=id=>document.getElementById(id);
 for(const [grp,items] of Object.entries(GROUPS)){
   const box=$("g_"+grp);
@@ -1644,44 +1530,46 @@ for(const [grp,items] of Object.entries(GROUPS)){
   }
 }
 function syncVoice(){
-  const localOnly=["croak","whisper"];
+  const synthOnly=["croak","whisper"];
   [...$("g_voice").children].forEach(c=>{
-    const hide=sel.engine==="cloud"&&localOnly.includes(c.dataset.v);
+    const hide=sel.engine==="kokoro"&&synthOnly.includes(c.dataset.v);
     c.classList.toggle("off",hide);
     if(hide&&sel.voice===c.dataset.v){sel.voice="auto";[...$("g_voice").children].forEach(x=>x.classList.toggle("on",x.dataset.v==="auto"));}
   });
-  const man=sel.mode==="manual", synth=sel.engine==="local", styled=sel.engine!=="local";
+  const man=sel.mode==="manual";
   $("manual").classList.toggle("show",man);
-  $("mStyle").style.display=styled?"":"none"; $("lblStyle").style.display=styled?"":"none";
-  $("rowBK").style.display=synth?"flex":"none"; $("lblBK").style.display=synth?"":"none";
+  $("mStyle").style.display="none"; $("lblStyle").style.display="none";
+  $("rowBK").style.display="flex"; $("lblBK").style.display="";
   $("go").textContent=man?"RENDER MY EDIT":"GENERATE";
   const note=$("engineNote");
-  if(sel.engine==="hosted")note.textContent=window.__hosted?"✓ free AI vocals on a hosted GPU — no key, no local GPU needed. First run can take a few min (shared queue).":"⚠ one-time tiny setup:  python3 apollo.py --setup-hosted  — then free real AI vocals, no key, no GPU.";
-  else if(sel.engine==="cloud")note.textContent="needs a free MiniMax key (gear). Real sung vocals, fast + reliable.";
-  else if(sel.engine==="neural")note.textContent=window.__neural?"✓ local AI vocals — private + offline. SLOW without a GPU (minutes/song on a laptop).":"⚠ local model:  python3 apollo.py --setup-neural  — best on a GPU machine, slow on laptops.";
-  else note.textContent="offline, instant, no key — synth music + robotic vocals. Always works.";
+  if(sel.engine==="kokoro")note.textContent=window.__kokoro?"✓ real AI voice ready — free, runs on your CPU, no key. Sings your lyrics over the music.":"⚠ one-time setup:  python3 apollo.py --setup-voice  — installs the free Kokoro voice (no key, no GPU). Until then this falls back to robovox.";
+  else note.textContent="instant, offline, no key — synth music + robotic vocals. Always works.";
 }
 // ---- config
 async function loadConf(){
   const c=await (await fetch("/api/config")).json();
-  window.__neural=!!c.neural; window.__hosted=!!c.hosted;
-  $("k_sf").placeholder=c.siliconflow||"sk-…"; $("k_mm").placeholder=c.minimax||"…"; $("k_gq").placeholder=c.groq||"gsk_…";
-  $("m_sf").value=c.sf_model; $("m_mm").value=c.mm_model; $("libPath").textContent="· "+c.lib;
-  $("confHint").innerHTML=(c.hosted?"Hosted engine: <b>ready</b> (free AI vocals, no GPU/key needed). ":"Hosted engine: run <b>python3 apollo.py --setup-hosted</b> for free AI vocals — no GPU, no key. ")
-    +(c.minimax?"":"No MiniMax key: cloud engine off. ")+(c.siliconflow?"":"No SiliconFlow key: lyrics use a built-in template. ")
-    +(c.espeak?"":"espeak-ng missing — synth songs are instrumental.");
-  if(!localStorage.getItem("apollo_engine")){
-    const def=c.hosted?"hosted":(c.minimax?"cloud":(c.neural?"neural":"local"));
-    sel.engine=def;[...$("g_engine").children].forEach(x=>x.classList.toggle("on",x.dataset.v===def));
-  }
+  window.__kokoro=!!c.kokoro;
+  $("k_sf").placeholder=c.siliconflow||"sk-…"; $("k_gq").placeholder=c.groq||"gsk_…";
+  $("m_sf").value=c.sf_model; $("libPath").textContent="· "+c.lib;
+  $("confHint").innerHTML=(c.kokoro?"Voice engine: <b>ready</b> (free Kokoro AI singer, no key). ":"Voice engine: run <b>python3 apollo.py --setup-voice</b> for a free real AI voice (no key, no GPU). ")
+    +(c.siliconflow?"":"No SiliconFlow key: lyrics use a built-in template (add a key for custom lyrics). ")
+    +(c.espeak?"":"espeak-ng missing — synth-engine vocals off.");
   syncVoice();
 }
 $("gear").onclick=()=>$("drawer").classList.toggle("show");
+$("quit").onclick=async()=>{
+  try{await fetch("/api/quit",{method:"POST"});}catch(e){}
+  document.body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100vh;'
+    +'font-family:ui-monospace,monospace;color:#8e92a6;text-align:center;line-height:1.8">'
+    +'<div><div style="color:#f0a83a;letter-spacing:.3em;font-weight:700">APOLLO STOPPED</div>'
+    +'You can close this tab/window now.</div></div>';
+  setTimeout(()=>{try{window.close();}catch(e){}},400);
+};
 $("saveKeys").onclick=async()=>{
   await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({
-    siliconflow_api_key:$("k_sf").value,minimax_api_key:$("k_mm").value,groq_api_key:$("k_gq").value,
-    siliconflow_model:$("m_sf").value,minimax_model:$("m_mm").value})});
-  $("k_sf").value=$("k_mm").value=$("k_gq").value="";
+    siliconflow_api_key:$("k_sf").value,groq_api_key:$("k_gq").value,
+    siliconflow_model:$("m_sf").value})});
+  $("k_sf").value=$("k_gq").value="";
   loadConf(); status("keys saved");
 };
 // ---- status + generate
@@ -1779,74 +1667,25 @@ $("player").addEventListener("play",()=>{hookVU();acx&&acx.resume();});
 loadConf();loadLib();
 </script></body></html>"""
 
-def setup_hosted():
-    """Tiny one-time install: gradio-client, for the free no-GPU hosted neural engine."""
-    print("[apollo] installing gradio-client for the free hosted neural engine (no GPU, no key)…")
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "gradio_client"])
-    except subprocess.CalledProcessError:
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", "gradio_client"])
-        except subprocess.CalledProcessError as e:
-            print(f"[apollo] install failed: {e}\n[apollo] try:  pip install gradio_client")
-            return
-    _HOSTED_OK.clear()
-    print(f"[apollo] hosted engine {'READY' if hosted_available() else 'installed — restart Apollo'}.")
-    print("[apollo] launch Apollo, pick the HOSTED engine. Real AI vocals, free, runs on the Space's GPU.")
 
-def setup_neural():
-    """One-time: build an isolated venv with PyTorch + ACE-Step, wire it into config."""
-    import venv as _venv
-    print("[apollo] setting up the neural engine (ACE-Step). This is a big one-time install.\n")
-    has_nv = shutil.which("nvidia-smi") is not None
-    print(f"[apollo] GPU detected: {'NVIDIA CUDA' if has_nv else 'none — will install CPU PyTorch (songs render slowly)'}")
-    print(f"[apollo] venv: {NEURAL_DIR}")
-    os.makedirs(os.path.dirname(NEURAL_DIR), exist_ok=True)
-    if not os.path.isfile(os.path.join(NEURAL_DIR, "bin", "python")):
-        print("[apollo] creating venv…")
-        _venv.EnvBuilder(with_pip=True).create(NEURAL_DIR)
-    py = os.path.join(NEURAL_DIR, "bin", "python")
-    def run(cmd):
-        print("  $ " + " ".join(cmd)); subprocess.check_call(cmd)
-    try:
-        run([py, "-m", "pip", "install", "--upgrade", "pip", "wheel", "setuptools"])
-        if has_nv:
-            run([py, "-m", "pip", "install", "torch", "torchaudio"])
-        else:
-            run([py, "-m", "pip", "install", "torch", "torchaudio",
-                 "--index-url", "https://download.pytorch.org/whl/cpu"])
-        run([py, "-m", "pip", "install", "soundfile", "librosa"])
-        run([py, "-m", "pip", "install", "git+https://github.com/ace-step/ACE-Step.git"])
-    except subprocess.CalledProcessError as e:
-        print(f"\n[apollo] install failed: {e}\n[apollo] you can retry, or open an issue. The cloud/synth engines still work.")
-        return
-    CONF["neural_python"] = py
-    save_conf(CONF)
-    _NEURAL_OK.clear()
-    ok = neural_available()
-    print(f"\n[apollo] neural engine {'READY' if ok else 'installed but not importable — check the log above'}.")
-    print("[apollo] first song will download the ACE-Step model (~3.5GB) to ~/.cache/ace-step. Launch Apollo and pick the NEURAL engine.")
+
 
 # ----------------------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(description="Apollo — AI song forge")
     ap.add_argument("--port", type=int, default=int(CONF.get("port", 8585)))
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--demo", action="store_true", help="render the built-in template offline to ./apollo_demo.wav and exit")
+    ap.add_argument("--demo", nargs="?", const="lofi", default=None, metavar="GENRE",
+                    help="render an offline demo song to ./apollo_demo.wav and exit (optional genre, e.g. --demo lofi)")
     ap.add_argument("--no-vocals", action="store_true")
     ap.add_argument("--no-window", action="store_true", help="don't open the app window")
     ap.add_argument("--no-sound", action="store_true", help="skip the launch sting")
     ap.add_argument("--install-desktop", action="store_true", help="write icon + .desktop launcher and exit")
-    ap.add_argument("--setup-neural", action="store_true", help="install the local ACE-Step neural engine (free, real vocals, needs GPU to be fast) and exit")
-    ap.add_argument("--setup-hosted", action="store_true", help="install gradio-client for the free hosted neural engine (no GPU, no key) and exit")
+    ap.add_argument("--setup-voice", action="store_true", help="install the free Kokoro voice engine + model (one-time, no key, no GPU) and exit")
     args = ap.parse_args()
 
-    if args.setup_hosted:
-        setup_hosted()
-        return
-
-    if args.setup_neural:
-        setup_neural()
+    if args.setup_voice:
+        setup_kokoro()
         return
 
     if args.install_desktop:
@@ -1854,20 +1693,57 @@ def main():
         return
 
     if args.demo:
-        spec = validate_spec(template_spec("synthwave"), "synthwave"); spec["_genre"] = "synthwave"
+        gd = args.demo if args.demo in GENRES else "lofi"
+        spec = validate_spec(template_spec(gd), gd); spec["_genre"] = gd
         t0 = time.time()
         L, R, dur = render_local(spec, {"voice": "male", "seed": 42, "no_vocals": args.no_vocals},
                                  progress=lambda s: print("  ·", s))
         write_wav("apollo_demo.wav", L, R)
-        print(f"[apollo] demo rendered: apollo_demo.wav  ({dur:.1f}s of audio in {time.time()-t0:.1f}s)")
+        print(f"[apollo] demo rendered: apollo_demo.wav  ({gd}, {dur:.1f}s of audio in {time.time()-t0:.1f}s)")
         return
 
     if not ESPEAK:
         print("[apollo] espeak-ng not found — local engine will be instrumental. Fix: sudo apt install espeak-ng")
     print(f"[apollo] v{VERSION} · library: {LIB_DIR}")
-    print(f"[apollo] listening on http://{args.host}:{args.port}")
-    srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    url = f"http://{'127.0.0.1' if args.host in ('0.0.0.0', '::') else args.host}:{args.port}"
+
+    import socket as _socket
+    def port_busy(host, port):
+        with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+            s.settimeout(0.4)
+            return s.connect_ex(("127.0.0.1" if host in ("0.0.0.0", "::") else host, port)) == 0
+
+    def is_apollo(host, port):
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/config", timeout=1.0) as r:
+                return b'"sf_model"' in r.read(400)
+        except Exception:
+            return False
+
+    host = args.host; port = args.port
+    # if the requested port is busy and it's already Apollo, just open that one
+    if port_busy(host, port) and is_apollo(host, port):
+        url = f"http://127.0.0.1:{port}"
+        print(f"[apollo] already running on {url} — opening it instead of starting a second copy.")
+        if not args.no_window:
+            try: open_window(url)
+            except Exception: pass
+        return
+    # otherwise find the next free port
+    srv = None
+    for p in range(port, port + 20):
+        if port_busy(host, p): continue
+        try:
+            srv = ThreadingHTTPServer((host, p), Handler); port = p; break
+        except OSError:
+            continue
+    if srv is None:
+        print(f"[apollo] couldn't bind any port in {args.port}-{args.port+19}. "
+              f"Something else is using them. Try: apollo --port 9000")
+        return
+    if port != args.port:
+        print(f"[apollo] port {args.port} was busy — using {port} instead.")
+    print(f"[apollo] listening on http://{host}:{port}")
+    url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}"
     def boot():
         if not args.no_sound:
             try: play_boot()

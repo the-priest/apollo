@@ -2,7 +2,6 @@
 """
 APOLLO — AI song forge.
 Pick a vibe, click GENERATE, get a song. Two engines:
-  cloud : DeepSeek (SiliconFlow) writes title/lyrics/style -> MiniMax music-2.6-free renders a real song with sung vocals (mp3)
   local : DeepSeek composes structure/chords/lyrics -> numpy synthesizes drums/bass/synths + espeak-ng robo-vocals (wav), fully offline
 Single file, stdlib + numpy. Config: ~/.config/apollo/config.json
 Author: The Priest's toolbench. License: do crimes responsibly (MIT).
@@ -16,7 +15,7 @@ except ImportError:
 
 SR = 44100
 APP = "apollo"
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 CONF_DIR = os.path.expanduser("~/.config/apollo")
 CONF_PATH = os.path.join(CONF_DIR, "config.json")
 LIB_DIR = os.path.expanduser("~/Music/Apollo")
@@ -232,29 +231,29 @@ def fit(x, n):
 # ----------------------------------------------------------------------------- genres
 # tone = (master_lowpass_hz, warmth_drive, tape_wow, vinyl_noise, hp_hz) — shapes the final sound
 GENRES = {
-    "synthwave": dict(bpm=(96,118), swing=0.50, harm="pad", bass="eights", lead="saw", arp=True, side=True,
-                      kit="electro", verb=0.40, tone=(8500, 1.5, 0.0008, 0.0, 32),
+    "synthwave": dict(bpm=(100,118), swing=0.50, harm="pad", bass="eights", lead="saw", arp=True, side=True,
+                      kit="electro", verb=0.42, tone=(8200, 1.6, 0.0010, 0.0, 32),
                       tags="80s synthwave, retrowave, analog synths, gated reverb drums, neon nostalgia"),
-    "pop":       dict(bpm=(100,126), swing=0.50, harm="pluck", bass="roots8", lead="tri", arp=False, side=False,
-                      kit="pop", verb=0.28, tone=(11000, 1.2, 0.0, 0.0, 36),
+    "pop":       dict(bpm=(104,122), swing=0.50, harm="pluck", bass="roots8", lead="tri", arp=True, side=True,
+                      kit="pop", verb=0.26, tone=(11000, 1.2, 0.0, 0.0, 36),
                       tags="modern pop, catchy hooks, polished production, radio-ready"),
-    "rock":      dict(bpm=(118,150), swing=0.50, harm="power", bass="eights", lead="saw", arp=False, side=False,
-                      kit="rock", verb=0.22, tone=(10000, 1.8, 0.0, 0.0, 45),
+    "rock":      dict(bpm=(124,150), swing=0.50, harm="power", bass="eights", lead="saw", arp=False, side=False,
+                      kit="rock", verb=0.20, tone=(10500, 2.0, 0.0, 0.0, 48),
                       tags="rock, driving electric guitars, live drums, anthemic"),
-    "hiphop":    dict(bpm=(80,96),  swing=0.56, harm="epiano", bass="syncop", lead="sine", arp=False, side=False,
-                      kit="hiphop", verb=0.22, tone=(6500, 1.7, 0.0012, 0.006, 30),
+    "hiphop":    dict(bpm=(82,92),  swing=0.57, harm="epiano", bass="syncop", lead="sine", arp=False, side=False,
+                      kit="hiphop", verb=0.20, tone=(6200, 1.8, 0.0012, 0.007, 28),
                       tags="hip-hop, boom bap, heavy 808 bass, head-nod groove"),
-    "edm":       dict(bpm=(124,130), swing=0.50, harm="pad", bass="eights", lead="saw", arp=True, side=True,
-                      kit="edm", verb=0.30, tone=(12000, 1.4, 0.0, 0.0, 34),
-                      tags="EDM, festival big-room, four-on-the-floor, euphoric drops"),
-    "lofi":      dict(bpm=(70,86),  swing=0.58, harm="epiano", bass="roots", lead="sine", arp=False, side=False,
-                      kit="lofi", verb=0.30, tone=(3400, 2.2, 0.0035, 0.010, 40),
+    "edm":       dict(bpm=(126,130), swing=0.50, harm="pad", bass="eights", lead="saw", arp=True, side=True,
+                      kit="edm", verb=0.32, tone=(13000, 1.5, 0.0, 0.0, 34),
+                      tags="EDM, festival big-room, four-on-the-floor, euphoric supersaw drops"),
+    "lofi":      dict(bpm=(72,84),  swing=0.60, harm="epiano", bass="roots", lead="sine", arp=False, side=False,
+                      kit="lofi", verb=0.30, tone=(3200, 2.3, 0.0040, 0.012, 40),
                       tags="lo-fi hip hop, dusty vinyl, mellow jazzy chords, rainy-day chill"),
-    "metal":     dict(bpm=(140,180), swing=0.50, harm="power", bass="eights", lead="saw", arp=False, side=False,
-                      kit="metal", verb=0.18, tone=(9500, 2.4, 0.0, 0.0, 55),
+    "metal":     dict(bpm=(150,180), swing=0.50, harm="power", bass="eights", lead="saw", arp=False, side=False,
+                      kit="metal", verb=0.16, tone=(9800, 2.6, 0.0, 0.0, 58),
                       tags="heavy metal, distorted riffing, double kick, aggressive"),
-    "folk":      dict(bpm=(88,112), swing=0.52, harm="epiano", bass="roots", lead="tri", arp=False, side=False,
-                      kit="folk", verb=0.28, tone=(7500, 1.3, 0.0015, 0.004, 50),
+    "folk":      dict(bpm=(92,114), swing=0.52, harm="pluck", bass="roots", lead="tri", arp=False, side=False,
+                      kit="folk", verb=0.30, tone=(7200, 1.3, 0.0018, 0.004, 50),
                       tags="indie folk, acoustic, warm and intimate, storytelling"),
 }
 MOOD_TAGS = {"dark":"dark, brooding","upbeat":"upbeat, energetic","melancholy":"melancholic, wistful",
@@ -588,6 +587,7 @@ def render_local(spec, opts, progress=lambda s: None):
     instrumental = opts.get("voice") == "instrumental" or opts.get("no_vocals")
     use_kokoro = bool(opts.get("use_kokoro")) and not instrumental
     kokoro_voice_id = opts.get("kokoro_voice_id", "am_michael")
+    vocal_mode = opts.get("vocal_mode", "sung")  # 'sung' or 'spoken'
     want_vox = (bool(ESPEAK) and not instrumental and not use_kokoro)
     melody_cache = {}
     swing = g["swing"]
@@ -642,7 +642,7 @@ def render_local(spec, opts, progress=lambda s: None):
                         try:
                             tgt = [midi_hz(m) for (_, _, m, _) in notes]
                             durs = [d for (_, d, _, _) in notes]
-                            voc = kokoro_sing_line(line_text, tgt, durs, kokoro_voice_id, progress)
+                            voc = kokoro_sing_line(line_text, tgt, durs, kokoro_voice_id, progress, mode=vocal_mode)
                             # fit the line into its musical window (don't overrun the next line)
                             win = int(min(7.6, 8*beat) * SR)
                             if len(voc) > win: voc = voc[:win]
@@ -725,8 +725,10 @@ def maybe_mp3(wav_path):
 
 # ----------------------------------------------------------------------------- fallback template (no-API demo)
 def template_spec(genre="synthwave"):
+    g = GENRES.get(genre, GENRES["synthwave"])
+    gbpm = (g["bpm"][0] + g["bpm"][1]) // 2
     return {
-        "_genre": genre, "title": "Neon Litany", "bpm": 108, "key": "A minor",
+        "_genre": genre, "title": "Neon Litany", "bpm": gbpm, "key": "A minor",
         "sections": [
             {"type":"intro","bars":4,"chords":["Am","F","C","G"],"energy":4,"lyrics":[],"contour":[]},
             {"type":"verse","bars":8,"chords":["Am","F","C","G","Am","F","C","E"],"energy":5,
@@ -910,7 +912,7 @@ def manual_local_spec(opts, manual):
             "bpm": bpm, "key": key, "sections": secs}
     return validate_spec(spec, genre)
 
-# ----------------------------------------------------------------------------- cloud engine (MiniMax music-2.6)
+# ----------------------------------------------------------------------------- lyric drafting (LLM)
 
 def draft_brief(opts, progress):
     """LLM song brief: (title, style_prompt, tagged lyrics). Raises on LLM failure."""
@@ -1024,24 +1026,106 @@ def _pitch_to(x, ratio):
     idx = np.arange(0, len(x), ratio)
     return np.interp(idx, np.arange(len(x)), x).astype(np.float32)
 
-def kokoro_sing_line(text, target_hz_list, dur_list, voice_id, progress):
-    """Synthesize a lyric line with Kokoro, then nudge each word toward its melody note.
-    Returns a 44100Hz mono float array. This gives a natural-timbre half-sung vocal."""
+def kokoro_sing_line(text, target_hz_list, dur_list, voice_id, progress, mode="sung", speed=0.92):
+    """Synthesize a lyric line with Kokoro. mode='spoken' = clear natural delivery (no pitch chasing);
+    mode='sung' = gently retuned toward the melody. Returns 44100Hz mono float."""
     ko = _kokoro_obj()
-    samples, sr = ko.create(text, voice=voice_id, speed=1.0)
+    samples, sr = ko.create(text, voice=voice_id, speed=speed)
     samples = _resample_to(np.asarray(samples, dtype=np.float32), sr, SR)
-    # estimate the spoken pitch so we can shift toward the target melody note
-    f0 = estimate_f0(samples) or 130.0
-    # gentle: pull the whole line toward the average target note (keeps it natural, not chipmunk)
-    if target_hz_list:
+    if mode != "spoken" and target_hz_list:
+        # SUNG: gently pull the line toward the average melody note (small, to stay intelligible)
+        f0 = estimate_f0(samples) or 130.0
         tgt = float(np.median([h for h in target_hz_list if h])) if any(target_hz_list) else f0
-        # fold target into a comfortable speaking range near f0
         while tgt > f0 * 1.5: tgt /= 2
         while tgt < f0 / 1.5: tgt *= 2
-        ratio = np.clip(tgt / f0, 0.8, 1.25)
-        samples = _pitch_to(samples, 1.0 / ratio)  # shift pitch up = compress time
+        ratio = np.clip(tgt / f0, 0.92, 1.12)   # tighter clamp = clearer words
+        samples = _pitch_to(samples, 1.0 / ratio)
     peak = float(np.abs(samples).max()) or 1.0
-    return (samples / peak * 0.9).astype(np.float32)
+    return (samples / peak * 0.92).astype(np.float32)
+
+def load_audio_file(path, progress=lambda m: None):
+    """Decode any audio file to 44100Hz stereo float via ffmpeg. Returns (L, R)."""
+    progress("decoding your file")
+    cmd = ["ffmpeg", "-v", "error", "-i", path, "-ac", "2", "-ar", str(SR), "-f", "f32le", "-"]
+    raw = subprocess.run(cmd, capture_output=True).stdout
+    if not raw:
+        raise RuntimeError("couldn't decode that file — is it a valid audio file?")
+    a = np.frombuffer(raw, dtype=np.float32)
+    if len(a) < 2: raise RuntimeError("decoded audio was empty")
+    L = a[0::2].copy(); R = a[1::2].copy()
+    n = min(len(L), len(R)); return L[:n], R[:n]
+
+def detect_bpm(mono, progress=lambda m: None):
+    """Estimate tempo from an onset envelope via autocorrelation. CPU-light, no librosa."""
+    progress("finding the tempo")
+    # downsample energy envelope at ~200Hz
+    hop = SR // 200
+    n = len(mono)//hop
+    env = np.array([np.abs(mono[i*hop:(i+1)*hop]).mean() for i in range(n)], dtype=np.float32)
+    env = env - fft_filter(env, lp=2)  # remove slow drift
+    env = np.maximum(env, 0)
+    if env.std() < 1e-6: return 90.0
+    # autocorrelation over plausible BPM range (60-180)
+    fps = SR/hop
+    best_bpm, best_score = 90.0, -1
+    for bpm in np.arange(60, 181, 0.5):
+        lag = fps * 60.0 / bpm
+        il = int(round(lag))
+        if il < 1 or il >= len(env): continue
+        score = float((env[:-il] * env[il:]).sum())
+        # favor mid-tempos a touch
+        score *= 1.0 - 0.0015*abs(bpm-110)
+        if score > best_score: best_score, best_bpm = score, bpm
+    return round(best_bpm, 1)
+
+def render_vocals_over(backing_L, backing_R, spec, opts, progress):
+    """Sing the spec's lyrics over a user-supplied backing track. Returns (L,R,dur)."""
+    g = GENRES[opts["genre"]]
+    bpm = spec["bpm"]; beat = 60.0/bpm
+    Nb = min(len(backing_L), len(backing_R))
+    voc = np.zeros(Nb, dtype=np.float32)
+    use_kokoro = bool(opts.get("use_kokoro"))
+    kvoice = opts.get("kokoro_voice_id", "am_michael")
+    vocal_mode = opts.get("vocal_mode", "sung")
+    variant = VOICE_VARIANT.get(opts.get("voice", "male"), "+m3")
+    # lay lyric lines on a simple bar grid, leaving an intro gap
+    t = beat*4*2  # start after 2 bars
+    bar = beat*4
+    for sec in spec["sections"]:
+        for line in sec.get("lyrics", []):
+            if t*SR >= Nb - SR: break
+            words = line.split()
+            if not words:
+                t += bar; continue
+            if use_kokoro and kokoro_available():
+                try:
+                    v = kokoro_sing_line(line, [], [], kvoice, progress, mode=vocal_mode)
+                except Exception as e:
+                    progress(f"voice line failed ({e})"); v = None
+            else:
+                v = None
+                if ESPEAK:
+                    parts = [sing_word(w, midi_hz(60), 0.4, variant) for w in words]
+                    if parts: v = np.concatenate(parts)
+            if v is not None and len(v):
+                win = int(bar*2*SR)
+                if len(v) > win: v = v[:win]
+                place(voc, v, t, 1.0)
+            t += bar * (2 if len(words) > 5 else 1)
+        t += bar  # gap between sections
+    # mix: duck the backing slightly under the vocal, add light vocal reverb
+    voc = fft_filter(voc, hp=110, lp=7000)
+    voc = np.tanh(voc*1.3)/math.tanh(1.3)
+    irl, irr = make_reverb_ir(1.1)
+    wet = fit(fft_convolve(voc, irl), Nb)*0.18
+    bk = np.abs(voc) > 0.02
+    duck = np.ones(Nb, dtype=np.float32); duck[bk] = 0.7
+    duck = fft_filter(duck, lp=30)
+    L = backing_L[:Nb]*duck + voc*0.9 + wet
+    R = backing_R[:Nb]*duck + voc*0.9 + wet
+    peak = max(np.max(np.abs(L)), np.max(np.abs(R)), 1e-9)
+    L = np.tanh(L/peak*0.99)/math.tanh(0.99); R = np.tanh(R/peak*0.99)/math.tanh(0.99)
+    return (L*0.95).astype(np.float32), (R*0.95).astype(np.float32), Nb/SR
 
 # ----------------------------------------------------------------------------- jobs
 JOBS = {}
@@ -1062,6 +1146,7 @@ def run_job(jid, opts):
 
         # decide the vocal source
         engine = opts.get("engine", "synth")
+        opts["vocal_mode"] = opts.get("vocal_mode", "sung")
         if engine == "kokoro":
             if not kokoro_available():
                 raise RuntimeError("the voice engine isn't installed yet — run:  apollo --setup-voice  "
@@ -1069,6 +1154,34 @@ def run_job(jid, opts):
             opts["use_kokoro"] = True
             opts["kokoro_voice_id"] = KOKORO_VOICES.get(opts.get("voice", "male"),
                                                         CONF.get("kokoro_voice", "am_michael"))
+
+        # backing-track mode: sing over a user-uploaded MP3 instead of generating music
+        backing = opts.get("backing_file")
+        if backing and os.path.isfile(backing):
+            bL, bR = load_audio_file(backing, progress)
+            bpm = detect_bpm((bL+bR)*0.5, progress)
+            progress(f"detected ~{bpm:.0f} bpm")
+            if opts.get("mode") == "manual" and opts.get("manual"):
+                man = dict(opts["manual"]); man["bpm"] = str(int(bpm))
+                spec = manual_local_spec({**opts, "manual": man}, man); src = "you"
+            else:
+                try:
+                    spec = llm_local_spec(opts, progress); src = "deepseek" if CONF.get("siliconflow_api_key") else "groq"
+                except LLMError:
+                    spec = validate_spec(template_spec(opts["genre"]), opts["genre"]); spec["_genre"]=opts["genre"]; src="template"
+            spec["bpm"] = int(bpm)
+            progress("singing your lyrics over the track")
+            L, R, dur = render_vocals_over(bL, bR, spec, opts, progress)
+            wav = os.path.join(TMP_DIR, f"{jid}.wav"); write_wav(wav, L, R); out = maybe_mp3(wav)
+            lyrics = "\n\n".join(f"[{s['type'].title()}]\n" + "\n".join(s["lyrics"]) if s["lyrics"] else f"[{s['type'].title()}]"
+                                 for s in spec["sections"])
+            job.update(title=spec["title"], lyrics=lyrics, file=f"/audio/{os.path.basename(out)}",
+                       meta=f"your track · {int(bpm)} bpm · {int(dur//60)}:{int(dur%60):02d} · {'kokoro' if engine=='kokoro' else 'synth'} {opts.get('vocal_mode','sung')} vocals · lyrics by {src}",
+                       spec=spec, bpm=spec["bpm"], key=spec["key"])
+            try: os.remove(backing)
+            except Exception: pass
+            job["stage"] = "done"; job["done"] = True; progress("done")
+            return
 
         # build the song spec (LLM if a key is set, else the built-in template)
         if opts.get("mode") == "manual" and opts.get("manual"):
@@ -1335,12 +1448,27 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             n = int(self.headers.get("Content-Length", 0) or 0)
+            # binary upload endpoint (raw audio bytes) — handled before JSON parse
+            if self.path == "/api/upload":
+                if n > 60_000_000:
+                    return self._send(413, {"error": "file too big (max 60MB)"})
+                data = self.rfile.read(n)
+                uid = hashlib.sha1(data[:4096] + str(time.time()).encode()).hexdigest()[:12]
+                ext = (self.headers.get("X-Ext", "mp3") or "mp3").lower()
+                ext = "".join(c for c in ext if c.isalnum())[:4] or "mp3"
+                dst = os.path.join(TMP_DIR, f"upload_{uid}.{ext}")
+                with open(dst, "wb") as f: f.write(data)
+                return self._send(200, {"id": uid, "path": dst})
             body = json.loads(self.rfile.read(n).decode() or "{}")
             if self.path == "/api/generate":
                 opts = {k: str(body.get(k, "auto")).lower() for k in ("engine","genre","mood","tempo","voice","length")}
                 opts["idea"] = str(body.get("idea", ""))[:1200]
                 if opts["genre"] not in GENRES and opts["genre"] != "auto": opts["genre"] = "auto"
                 opts["mode"] = str(body.get("mode", "auto")).lower()
+                opts["vocal_mode"] = "spoken" if str(body.get("vocal_mode","")).lower() == "spoken" else "sung"
+                bp = body.get("backing_path")
+                if isinstance(bp, str) and bp.startswith(TMP_DIR) and os.path.isfile(bp):
+                    opts["backing_file"] = bp
                 man = body.get("manual")
                 if opts["mode"] == "manual" and isinstance(man, dict):
                     opts["manual"] = {"title": str(man.get("title", ""))[:120], "style": str(man.get("style", ""))[:1900],
@@ -1404,6 +1532,7 @@ textarea:focus,input:focus,button:focus-visible{outline:2px solid var(--amber);o
   font:11px var(--mono);letter-spacing:.08em;padding:7px 13px;cursor:pointer;text-transform:uppercase}
 .chip.on{background:var(--amber);border-color:var(--amber);color:#161204;font-weight:700}
 .chip.off{display:none}
+#uploadRow{display:flex;gap:10px}
 #manual{display:none}
 #manual.show{display:block}
 .mf{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:10px;color:var(--ink);
@@ -1469,11 +1598,20 @@ pre{font:12.5px/1.7 var(--mono);color:var(--ink);background:var(--panel2);border
 <div class="lbl">TEMPO</div><div class="chips" id="g_tempo"></div>
 <div class="lbl">VOICE</div><div class="chips" id="g_voice"></div>
 <div class="lbl">LENGTH</div><div class="chips" id="g_length"></div>
+<div class="lbl">VOCAL STYLE</div><div class="chips" id="g_vmode"></div>
+
+<div class="lbl">YOUR OWN TRACK <span class="dimnote">— optional: sing your lyrics over an MP3 you upload</span></div>
+<div id="uploadRow">
+  <input type="file" id="mp3file" accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac" style="display:none">
+  <button class="btn" id="pickMp3" style="flex:1">+ LOAD MP3 / AUDIO</button>
+  <button class="btn" id="clearMp3" style="display:none">✕</button>
+</div>
+<div id="mp3name" style="font:11px var(--mono);color:var(--amber);margin-top:7px;display:none"></div>
 
 <div id="manual">
   <div class="lbl">TITLE</div>
   <input class="mf" id="mTitle" autocomplete="off" placeholder="Untitled">
-  <div class="lbl" id="lblStyle">STYLE PROMPT <span class="dimnote">— what MiniMax hears</span></div>
+  <div class="lbl" id="lblStyle">STYLE NOTES <span class="dimnote">— optional</span></div>
   <textarea id="mStyle" placeholder="genre, mood, instrumentation, tempo feel, vocal type"></textarea>
   <div class="lbl">LYRICS <span class="dimnote">— tag sections: [Intro] [Verse] [Pre Chorus] [Chorus] [Bridge] [Outro]</span></div>
   <textarea id="mLyrics" style="min-height:210px" placeholder="[Verse]
@@ -1517,8 +1655,10 @@ const GROUPS={
  mood:[["auto","AUTO"],["dark","DARK"],["upbeat","UPBEAT"],["melancholy","MELANCHOLY"],["aggressive","AGGRESSIVE"],["chill","CHILL"],["epic","EPIC"],["romantic","ROMANTIC"]],
  tempo:[["auto","AUTO"],["slow","SLOW"],["mid","MID"],["fast","FAST"]],
  voice:[["auto","AUTO"],["male","MALE"],["female","FEMALE"],["instrumental","INSTRUMENTAL"],["croak","CROAK*"],["whisper","WHISPER*"]],
- length:[["standard","STANDARD"],["short","SHORT"],["full","FULL"]]};
-const sel={engine:"kokoro",mode:"auto",genre:"lofi",mood:"auto",tempo:"auto",voice:"male",length:"standard"};
+ length:[["standard","STANDARD"],["short","SHORT"],["full","FULL"]],
+ vmode:[["sung","SUNG"],["spoken","SPOKEN · CLEAREST"]]};
+const sel={engine:"kokoro",mode:"auto",genre:"lofi",mood:"auto",tempo:"auto",voice:"male",length:"standard",vmode:"sung"};
+let backingPath=null;
 const $=id=>document.getElementById(id);
 for(const [grp,items] of Object.entries(GROUPS)){
   const box=$("g_"+grp);
@@ -1581,7 +1721,8 @@ async function generate(){
   $("go").disabled=true; $("card").classList.remove("show"); $("savedPath").style.display="none";
   resetStatus(); status("▸ queued");
   localStorage.setItem("apollo_engine",sel.engine);
-  const body={...sel,idea:$("idea").value};
+  const body={...sel,vocal_mode:sel.vmode,idea:$("idea").value};
+  if(backingPath)body.backing_path=backingPath;
   if(sel.mode==="manual")body.manual={title:$("mTitle").value,style:$("mStyle").value,
     lyrics:$("mLyrics").value,bpm:$("mBpm").value,key:$("mKey").value};
   try{
@@ -1603,6 +1744,26 @@ async function generate(){
   }catch(e){status("✗ "+e,true);$("go").disabled=false;vuMode="idle";}
 }
 $("go").onclick=generate; $("again").onclick=generate;
+$("pickMp3").onclick=()=>$("mp3file").click();
+$("mp3file").onchange=async(e)=>{
+  const f=e.target.files[0]; if(!f)return;
+  resetStatus(); status("▸ uploading "+f.name+" …");
+  const ext=(f.name.split(".").pop()||"mp3");
+  try{
+    const r=await(await fetch("/api/upload",{method:"POST",headers:{"X-Ext":ext},body:f})).json();
+    if(r.error)throw r.error;
+    backingPath=r.path;
+    $("mp3name").textContent="♪ "+f.name+" — your lyrics will be sung over this";
+    $("mp3name").style.display="block"; $("clearMp3").style.display="block";
+    $("pickMp3").textContent="✓ TRACK LOADED";
+    status("track loaded — set your lyrics (or idea) and hit GENERATE");
+  }catch(err){status("✗ upload failed: "+err,true);}
+};
+$("clearMp3").onclick=()=>{
+  backingPath=null; $("mp3file").value="";
+  $("mp3name").style.display="none"; $("clearMp3").style.display="none";
+  $("pickMp3").textContent="+ LOAD MP3 / AUDIO";
+};
 $("draft").onclick=async()=>{
   $("draft").disabled=true; resetStatus(); status("▸ drafting with AI…");
   try{
